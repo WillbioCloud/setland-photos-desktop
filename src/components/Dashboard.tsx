@@ -113,22 +113,22 @@ function OperatorDashboard() {
         {metricsData.map((metric, i) => {
           const Icon = metric.icon;
           return (
-            <Card key={i} className="shadow-sm">
+            <Card key={i} className="shadow-sm lux-card dark:bg-white/[0.03] dark:backdrop-blur-xl dark:border-white/10 dark:lux-top-highlight hover:-translate-y-0.5 hover:shadow-md transition-lux">
               <CardContent className="p-5">
                 <div className="flex items-center justify-between mb-4">
-                  <div className="p-2.5 rounded-2xl bg-primary/10 text-primary">
+                  <div className="p-2.5 rounded-2xl bg-primary/10 text-primary ring-1 ring-primary/20 shadow-sm dark:shadow-[0_0_16px_rgba(217,164,92,0.25)]">
                     <Icon className="h-5 w-5" />
                   </div>
                   {metric.trend && (
-                    <div className="flex items-center gap-1 text-primary text-xs font-medium bg-primary/10 px-3 py-1 rounded-full font-mono">
+                    <div className="flex items-center gap-1 text-primary text-xs font-medium bg-primary/10 px-3 py-1 rounded-full font-mono tabular-figures border border-primary/20">
                       <ArrowUpRight className="h-3 w-3" />
                       {metric.trend}
                     </div>
                   )}
                 </div>
-                
+
                 <h3 className="text-muted-foreground text-sm font-medium mb-1">{metric.title}</h3>
-                <p className="text-2xl font-bold text-foreground tracking-tight font-mono">{metric.value}</p>
+                <p className="text-2xl font-bold text-foreground tracking-tight font-mono tabular-figures">{metric.value}</p>
               </CardContent>
             </Card>
           );
@@ -138,7 +138,7 @@ function OperatorDashboard() {
       {/* 2. Layout Inferior */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         {/* COLUNA ESQUERDA (Maior) - Desempenho da Equipe */}
-        <Card className="lg:col-span-7 shadow-sm flex flex-col">
+        <Card className="lg:col-span-7 shadow-sm lux-card dark:bg-white/[0.03] dark:backdrop-blur-xl dark:border-white/10 flex flex-col transition-lux">
           <CardHeader className="pb-4">
             <CardTitle className="text-lg font-semibold text-foreground">Desempenho da Equipe</CardTitle>
             <p className="text-sm text-muted-foreground mt-1">Sessões e taxa de conversão diária.</p>
@@ -209,7 +209,7 @@ function OperatorDashboard() {
             </CardContent>
           </Card>
 
-          <Card className="shadow-sm flex-1">
+          <Card className="shadow-sm lux-card dark:bg-white/[0.03] dark:backdrop-blur-xl dark:border-white/10 flex-1 transition-lux">
             <CardHeader className="pb-4">
               <CardTitle className="text-base font-semibold text-foreground flex items-center gap-2">
                 <History className="h-4 w-4 text-muted-foreground" />
@@ -221,9 +221,9 @@ function OperatorDashboard() {
                 <div className="relative pl-5 space-y-4 before:absolute before:inset-y-0 before:left-[9px] before:w-[2px] before:bg-border before:border-dashed">
                   {activities.map((item) => (
                     <div key={item.id} className="relative">
-                      <div className="absolute -left-[25px] top-[4px] h-2.5 w-2.5 bg-card border-2 border-primary rounded-full shadow-sm z-10"></div>
+                      <div className="absolute -left-[25px] top-[4px] h-2.5 w-2.5 bg-card border-2 border-primary rounded-full shadow-sm dark:shadow-[0_0_8px_rgba(217,164,92,0.7)] z-10"></div>
                       <p className="text-xs font-medium text-foreground leading-tight">{item.text}</p>
-                      <p className="text-[10px] text-muted-foreground mt-1 font-mono">{item.time}</p>
+                      <p className="text-[10px] text-muted-foreground mt-1 font-mono tabular-figures">{item.time}</p>
                     </div>
                   ))}
                 </div>
@@ -300,7 +300,7 @@ function MasterDashboard() {
 
         setChartDataState([
           { category: "PDV (Parque)", vendas: totalFatPdv, fill: "var(--theme-accent)" },
-          { category: "Site (Online)", vendas: totalFatWeb, fill: "#00D2FF" } // Azul ciano para destacar a web
+          { category: "Site (Online)", vendas: totalFatWeb, fill: "var(--theme-info)" } // Token analítico: royal no claro, ciano no escuro
         ]);
       }
     }
@@ -332,39 +332,39 @@ function MasterDashboard() {
 
       {/* GRID DE KPIs (3 Colunas) */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <Card className="shadow-sm">
+        <Card className="shadow-sm lux-card dark:bg-white/[0.03] dark:backdrop-blur-xl dark:border-white/10 dark:lux-top-highlight hover:-translate-y-0.5 hover:shadow-md transition-lux">
           <CardHeader className="flex flex-row items-center justify-between pb-2">
             <CardTitle className="text-sm font-medium text-muted-foreground">Faturamento Global</CardTitle>
-            <div className="p-2.5 rounded-xl bg-primary/10 text-primary">
+            <div className="p-2.5 rounded-xl bg-primary/10 text-primary ring-1 ring-primary/20 shadow-sm dark:shadow-[0_0_16px_rgba(217,164,92,0.25)]">
               <DollarSign className="h-4 w-4" />
             </div>
           </CardHeader>
           <CardContent>
-            <div className="text-3xl font-bold font-mono text-foreground tracking-tight">R$ {kpis.faturamento.toFixed(2).replace('.', ',')}</div>
+            <div className="text-3xl font-bold font-mono tabular-figures text-foreground tracking-tight">R$ {kpis.faturamento.toFixed(2).replace('.', ',')}</div>
           </CardContent>
         </Card>
 
-        <Card className="shadow-sm">
+        <Card className="shadow-sm lux-card dark:bg-white/[0.03] dark:backdrop-blur-xl dark:border-white/10 dark:lux-top-highlight hover:-translate-y-0.5 hover:shadow-md transition-lux">
           <CardHeader className="flex flex-row items-center justify-between pb-2">
             <CardTitle className="text-sm font-medium text-muted-foreground">Taxa de Conversão</CardTitle>
-            <div className="p-2.5 rounded-xl bg-primary/10 text-primary">
+            <div className="p-2.5 rounded-xl bg-brand-info/10 text-brand-info ring-1 ring-brand-info/20 shadow-sm">
               <Percent className="h-4 w-4" />
             </div>
           </CardHeader>
           <CardContent>
-            <div className="text-3xl font-bold font-mono text-foreground tracking-tight">{kpis.conversao}%</div>
+            <div className="text-3xl font-bold font-mono tabular-figures text-foreground tracking-tight">{kpis.conversao}%</div>
           </CardContent>
         </Card>
 
-        <Card className="shadow-sm">
+        <Card className="shadow-sm lux-card dark:bg-white/[0.03] dark:backdrop-blur-xl dark:border-white/10 dark:lux-top-highlight hover:-translate-y-0.5 hover:shadow-md transition-lux">
           <CardHeader className="flex flex-row items-center justify-between pb-2">
             <CardTitle className="text-sm font-medium text-muted-foreground">Ticket Médio</CardTitle>
-            <div className="p-2.5 rounded-xl bg-primary/10 text-primary">
+            <div className="p-2.5 rounded-xl bg-brand-imperial/10 text-brand-imperial ring-1 ring-brand-imperial/20 shadow-sm">
               <ShoppingCart className="h-4 w-4" />
             </div>
           </CardHeader>
           <CardContent>
-            <div className="text-3xl font-bold font-mono text-foreground tracking-tight">R$ {kpis.ticketMedio.toFixed(2).replace('.', ',')}</div>
+            <div className="text-3xl font-bold font-mono tabular-figures text-foreground tracking-tight">R$ {kpis.ticketMedio.toFixed(2).replace('.', ',')}</div>
           </CardContent>
         </Card>
       </div>
@@ -373,7 +373,7 @@ function MasterDashboard() {
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         
         {/* BLOCO DE GRÁFICO */}
-        <Card className="lg:col-span-5 shadow-sm flex flex-col">
+        <Card className="lg:col-span-5 shadow-sm lux-card dark:bg-white/[0.03] dark:backdrop-blur-xl dark:border-white/10 flex flex-col transition-lux">
           <CardHeader>
             <CardTitle className="text-lg font-semibold text-foreground">Faturamento por Categoria</CardTitle>
           </CardHeader>
@@ -424,19 +424,19 @@ function MasterDashboard() {
                 <TableBody>
                   {photographers.length > 0 ? (
                     photographers.map((photographer) => (
-                      <TableRow key={photographer.id}>
+                      <TableRow key={photographer.id} className="hover:bg-muted/30 dark:hover:bg-white/[0.05] transition-colors duration-150 ease-out">
                         <TableCell>
                           <div className="flex items-center gap-3">
-                            <div className="w-10 h-10 rounded-full overflow-hidden border border-border">
+                            <div className="w-10 h-10 rounded-full overflow-hidden border border-border dark:border-white/15 ring-1 ring-black/5 dark:ring-white/10 shadow-sm">
                               <img src={photographer.avatar} alt={photographer.name} className="w-full h-full object-cover" />
                             </div>
                             <span className="font-medium text-foreground">{photographer.name}</span>
                           </div>
                         </TableCell>
-                        <TableCell className="text-center font-mono">{photographer.digital}</TableCell>
-                        <TableCell className="text-center font-mono">{photographer.printed}</TableCell>
-                        <TableCell className="text-right font-mono font-bold text-foreground">{photographer.soldTotal}</TableCell>
-                        <TableCell className="text-right text-muted-foreground text-sm">{photographer.lastSale}</TableCell>
+                        <TableCell className="text-center font-mono tabular-figures">{photographer.digital}</TableCell>
+                        <TableCell className="text-center font-mono tabular-figures">{photographer.printed}</TableCell>
+                        <TableCell className="text-right font-mono tabular-figures font-bold text-foreground">{photographer.soldTotal}</TableCell>
+                        <TableCell className="text-right text-muted-foreground text-sm font-mono tabular-figures">{photographer.lastSale}</TableCell>
                       </TableRow>
                     ))
                   ) : (

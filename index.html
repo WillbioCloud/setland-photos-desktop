@@ -5,6 +5,15 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>setland-photos-desktop</title>
+    <script>
+      // Aplica o tema persistido antes do primeiro paint (anti-flash). Padrão do quiosque: escuro.
+      try {
+        var t = localStorage.getItem('setland-theme');
+        var dark = t === 'dark' || !t || (t === 'system' && matchMedia('(prefers-color-scheme: dark)').matches);
+        if (dark) document.documentElement.classList.add('dark');
+        document.documentElement.style.colorScheme = dark ? 'dark' : 'light';
+      } catch (e) { document.documentElement.classList.add('dark'); }
+    </script>
   </head>
   <body>
     <div id="root"></div>

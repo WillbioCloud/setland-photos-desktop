@@ -116,16 +116,17 @@ export default function Clientes() {
   }, []);
 
   const getStatusBadge = (status: string) => {
+    const base = "inline-flex items-center gap-1.5 px-3 py-1 text-xs font-semibold rounded-full backdrop-blur-sm whitespace-nowrap shadow-sm transition-lux";
     switch (status) {
       case 'Pendente':
-        return <span className="px-3 py-1 text-xs font-semibold rounded-full bg-muted text-muted-foreground">Pendente</span>;
+        return <span className={`${base} bg-muted text-muted-foreground border border-border dark:border-white/10`}><span className="h-1.5 w-1.5 rounded-full bg-current opacity-70" />Pendente</span>;
       case 'PDV':
       case 'Convertido/Pago':
-        return <span className="px-3 py-1 text-xs font-semibold rounded-full bg-emerald-500/10 text-emerald-500 border border-emerald-500/20">Convertido (PDV)</span>;
+        return <span className={`${base} bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/25`}><span className="h-1.5 w-1.5 rounded-full bg-current shadow-[0_0_6px_currentColor]" />Convertido (PDV)</span>;
       case 'Site':
-        return <span className="px-3 py-1 text-xs font-semibold rounded-full bg-blue-500/10 text-blue-500 border border-blue-500/20">Convertido (Site)</span>;
+        return <span className={`${base} bg-brand-info/10 text-brand-info border border-brand-info/25`}><span className="h-1.5 w-1.5 rounded-full bg-current shadow-[0_0_6px_currentColor]" />Convertido (Site)</span>;
       case 'Abandonado':
-        return <span className="px-3 py-1 text-xs font-semibold rounded-full bg-destructive/10 text-destructive">Abandonado</span>;
+        return <span className={`${base} bg-destructive/10 text-destructive border border-destructive/25`}><span className="h-1.5 w-1.5 rounded-full bg-current opacity-70" />Abandonado</span>;
       default:
         return null;
     }
@@ -157,12 +158,12 @@ export default function Clientes() {
         <div className="flex items-center gap-3">
           <div className="relative">
             <Search className="absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-            <input 
-              type="text" 
-              placeholder="Buscar cliente..." 
+            <input
+              type="text"
+              placeholder="Buscar cliente..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
-              className="pl-11 pr-4 py-2.5 bg-background shadow-sm rounded-full text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring transition-all w-64 border border-input"
+              className="pl-11 pr-4 py-2.5 bg-background dark:bg-white/[0.05] dark:backdrop-blur-xl shadow-sm dark:shadow-none lux-card rounded-full text-sm text-foreground placeholder:text-muted-foreground/70 focus:outline-none focus:ring-2 focus:ring-ring focus:border-primary/40 transition-lux w-64 border border-input dark:border-white/10"
             />
           </div>
           
@@ -177,7 +178,7 @@ export default function Clientes() {
             </button>
             
             {isFilterOpen && (
-              <div className="absolute right-0 mt-3 w-48 bg-card border border-border rounded-xl shadow-md z-50 overflow-hidden animate-in fade-in slide-in-from-top-2 duration-200">
+              <div className="absolute right-0 mt-3 w-48 bg-card dark:bg-[#1A0B18]/90 dark:backdrop-blur-xl border border-border dark:border-white/10 rounded-xl shadow-md dark:shadow-black/60 lux-card z-50 overflow-hidden animate-in fade-in slide-in-from-top-2 duration-200">
                 <div className="py-2 flex flex-col">
                   {filters.map(filter => (
                     <button
@@ -218,14 +219,14 @@ export default function Clientes() {
                 </TableHeader>
                 <TableBody>
                   {filteredClients.map((client) => (
-                    <TableRow 
-                      key={client.id} 
+                    <TableRow
+                      key={client.id}
                       onClick={() => setSelectedClient(client)}
-                      className="border-b-border-dashed cursor-pointer group hover:bg-muted/30"
+                      className="border-b-border-dashed dark:border-white/[0.06] cursor-pointer group hover:bg-muted/30 dark:hover:bg-white/[0.05] transition-colors duration-150 ease-out"
                     >
                       <TableCell className="px-8 py-5">
                         <div className="flex items-center gap-4">
-                          <div className="w-10 h-10 rounded-full bg-primary/10 text-primary flex items-center justify-center font-bold text-sm shrink-0 border border-primary/20 group-hover:bg-primary group-hover:text-primary-foreground transition-colors overflow-hidden">
+                          <div className="w-10 h-10 rounded-full bg-primary/10 text-primary flex items-center justify-center font-bold text-sm shrink-0 border border-primary/20 ring-2 ring-primary/10 group-hover:ring-primary/40 group-hover:bg-primary group-hover:text-primary-foreground shadow-sm transition-all duration-150 ease-out overflow-hidden">
                             {client.avatar ? (
                               <img src={client.avatar} alt={client.name} className="w-full h-full object-cover" />
                             ) : (
@@ -241,10 +242,10 @@ export default function Clientes() {
                       <TableCell className="px-8 py-5">{client.photographer}</TableCell>
                       <TableCell className="px-8 py-5">
                         <div className="flex items-center gap-2.5">
-                          <span className="font-mono text-xs text-muted-foreground">{client.date}</span>
+                          <span className="font-mono tabular-figures text-xs text-muted-foreground">{client.date}</span>
                           <button
                             onClick={(e) => { e.stopPropagation(); setSyncModalClient(client); }}
-                            className="p-1.5 rounded-md hover:bg-muted transition-colors flex items-center justify-center border border-transparent hover:border-border"
+                            className="p-1.5 rounded-full bg-muted/50 dark:bg-white/[0.06] hover:bg-muted dark:hover:bg-white/[0.12] transition-lux flex items-center justify-center border border-border/60 dark:border-white/10 shadow-sm active:scale-95"
                             title={
                               !['PDV', 'Site'].includes(client.status) ? "Miniaturas salvas. Aguardando pagamento." :
                               client.driveStatus === 'synced' ? "Upload para o Drive concluído com sucesso!" :
@@ -268,9 +269,9 @@ export default function Clientes() {
                       <TableCell className="px-8 py-5">
                         <div className="flex items-center justify-end gap-2">
                           {/* Botão de WhatsApp */}
-                          <button 
+                          <button
                             onClick={(e) => { e.stopPropagation(); }}
-                            className={`p-2.5 rounded-full transition-colors bg-card shadow-sm hover:bg-muted border border-border
+                            className={`p-2.5 rounded-full transition-lux bg-card dark:bg-white/[0.06] shadow-sm hover:bg-muted dark:hover:bg-white/[0.12] border border-border dark:border-white/10 active:scale-95
                               ${client.phone ? 'text-primary' : 'text-muted-foreground/30 cursor-not-allowed'}
                             `}
                             title={client.phone ? "WhatsApp" : "Sem telefone"}
@@ -295,11 +296,11 @@ export default function Clientes() {
             </div>
             
             {/* Rodapé: Paginação Simulada */}
-            <div className="px-8 py-4 bg-muted/30 border-t border-border-dashed text-xs text-muted-foreground flex justify-between items-center shrink-0">
-              <p>Exibindo <span className="font-mono font-medium text-foreground">1</span> a <span className="font-mono font-medium text-foreground">{filteredClients.length}</span> de <span className="font-mono font-medium text-foreground">{clientsList.length}</span> leads</p>
+            <div className="px-8 py-4 bg-muted/30 dark:bg-white/[0.02] border-t border-border-dashed dark:border-white/[0.06] text-xs text-muted-foreground flex justify-between items-center shrink-0">
+              <p>Exibindo <span className="font-mono tabular-figures font-medium text-foreground">1</span> a <span className="font-mono tabular-figures font-medium text-foreground">{filteredClients.length}</span> de <span className="font-mono tabular-figures font-medium text-foreground">{clientsList.length}</span> leads</p>
               <div className="flex gap-2">
-                <button className="px-3 py-1.5 rounded-lg border border-border hover:bg-background text-foreground font-medium disabled:opacity-50 transition-colors">Anterior</button>
-                <button className="px-3 py-1.5 rounded-lg border border-border hover:bg-background text-foreground font-medium transition-colors">Próxima</button>
+                <button className="px-3 py-1.5 rounded-lg border border-border dark:border-white/10 hover:bg-background dark:hover:bg-white/[0.08] text-foreground font-medium disabled:opacity-50 transition-lux active:scale-95">Anterior</button>
+                <button className="px-3 py-1.5 rounded-lg border border-border dark:border-white/10 hover:bg-background dark:hover:bg-white/[0.08] text-foreground font-medium transition-lux active:scale-95">Próxima</button>
               </div>
             </div>
           </CardContent>

@@ -15,19 +15,36 @@
   --color-brand-accent: var(--theme-accent);
   --color-brand-accent-fg: var(--theme-accent-fg);
   --color-brand-danger: var(--theme-danger);
+  --color-brand-gold: var(--theme-gold);
+  --color-brand-gold-bright: var(--theme-gold-bright);
+  --color-brand-imperial: var(--theme-imperial);
+  --color-brand-info: var(--theme-info);
+  --color-brand-success: var(--theme-success);
+  --color-brand-glass: var(--theme-glass);
 }
 
 :root {
-  /* Modo Claro - Fundo papel, texto grafite, acento latão escuro */
-  --theme-bg: #FAF9F6;
+  /* ── Modo Claro · Operação Diurna — Alabaster suave, nunca branco puro no fundo ── */
+  --theme-bg: #F3F4F6;
   --theme-surface: #FFFFFF;
   --theme-ink: #1C1B17;
   --theme-muted: #6B6558;
-  --theme-border: #E4E1D8;
+  --theme-border: #E7E5DE;
   --theme-border-dashed: #D8D5CC;
-  --theme-accent: #9C6B2E;
+  --theme-accent: #B47D32;
   --theme-accent-fg: #FFFFFF;
   --theme-danger: #B24C4C;
+  --theme-gold: #B47D32;
+  --theme-gold-bright: #C99A4B;
+  --theme-imperial: #9333EA;
+  --theme-info: #2563EB;
+  --theme-success: #059669;
+  --theme-glass: rgba(255, 255, 255, 0.72);
+  --theme-bg-glow:
+    radial-gradient(1200px 500px at 50% -10%, rgba(180, 125, 50, 0.08), transparent 60%),
+    radial-gradient(900px 420px at 85% 110%, rgba(37, 99, 235, 0.06), transparent 60%);
+  --theme-card-shadow: 0 1px 2px rgba(28, 27, 23, 0.05), 0 8px 24px -12px rgba(28, 27, 23, 0.12);
+  --theme-gold-glow: 0 8px 24px -8px rgba(180, 125, 50, 0.45);
   --background: var(--theme-bg);
   --foreground: var(--theme-ink);
   --card: var(--theme-surface);
@@ -63,25 +80,39 @@
   --sidebar-ring: oklch(0.708 0 0);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    /* Modo Escuro - Fundo escuro, acento latão claro para contraste */
-    --theme-bg: #17181C;
-    --theme-surface: #1F2024;
-    --theme-ink: #EDEDEB;
-    --theme-muted: #9A978C;
-    --theme-border: #2C2D33;
-    --theme-border-dashed: #3A3B42;
-    --theme-accent: #D9A45C;
-    --theme-accent-fg: #1C1B17;
-    --theme-danger: #E08585;
-  }
+/* ── Modo Escuro · Padrão Quiosque/Castelo — Deep Obsidian com vinho, ouro medieval ──
+   Injetado via classe `.dark` na raiz pelo ThemeProvider (nunca via media query). */
+.dark {
+  --theme-bg: #0D020C;
+  --theme-surface: #170913;
+  --theme-ink: #F5EFE6;
+  --theme-muted: #A89B8C;
+  --theme-border: rgba(255, 255, 255, 0.08);
+  --theme-border-dashed: rgba(255, 255, 255, 0.14);
+  --theme-accent: #D9A45C;
+  --theme-accent-fg: #221105;
+  --theme-danger: #E08585;
+  --theme-gold: #D9A45C;
+  --theme-gold-bright: #E5B86E;
+  --theme-imperial: #C86DD7;
+  --theme-info: #38BDF8;
+  --theme-success: #34D399;
+  --theme-glass: rgba(255, 255, 255, 0.04);
+  --theme-bg-glow:
+    radial-gradient(1100px 480px at 50% -10%, rgba(217, 164, 92, 0.10), transparent 60%),
+    radial-gradient(800px 500px at 12% 8%, rgba(200, 109, 215, 0.07), transparent 55%),
+    radial-gradient(900px 600px at 90% 108%, rgba(120, 30, 60, 0.16), transparent 60%);
+  --theme-card-shadow: 0 1px 0 rgba(255, 255, 255, 0.06) inset, 0 20px 48px -20px rgba(0, 0, 0, 0.7);
+  --theme-gold-glow: 0 8px 28px -8px rgba(217, 164, 92, 0.55);
 }
 
 body {
   background-color: var(--theme-bg);
+  background-image: var(--theme-bg-glow);
+  background-attachment: fixed;
   color: var(--theme-ink);
   margin: 0;
+  transition: background-color 300ms ease-out, color 300ms ease-out;
 }
 
 @theme inline {
@@ -182,4 +213,48 @@ body {
 @layer utilities {
   .no-scrollbar::-webkit-scrollbar { display: none; }
   .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
+  /* ── Clean Luxury · microinterações e superfícies ── */
+  .transition-lux {
+    transition: all 150ms ease-out;
+  }
+  .glass-panel {
+    background: var(--theme-glass);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+  }
+  .lux-card {
+    box-shadow: var(--theme-card-shadow);
+  }
+  .lux-top-highlight {
+    position: relative;
+  }
+  .lux-top-highlight::before {
+    content: '';
+    position: absolute;
+    inset: 0 12% auto 12%;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.22), transparent);
+    pointer-events: none;
+  }
+  .gold-text-gradient {
+    background: linear-gradient(135deg, var(--theme-gold-bright), var(--theme-gold) 60%, var(--theme-gold-bright));
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+  .gold-glow {
+    box-shadow: var(--theme-gold-glow);
+  }
+  .animate-theme-icon {
+    animation: theme-icon-in 280ms cubic-bezier(0.22, 1, 0.36, 1);
+  }
+  .tabular-figures {
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+@keyframes theme-icon-in {
+  from { opacity: 0; transform: rotate(-60deg) scale(0.6); }
+  to { opacity: 1; transform: rotate(0deg) scale(1); }
 }
