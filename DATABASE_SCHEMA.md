@@ -4,11 +4,13 @@
 Tabelas públicas encontradas no banco atualizado:
 - `clients`
 - `employees`
+- `online_orders`
 - `orders`
 - `packages`
 - `photo_sessions`
 - `session_photos`
 - `system_settings`
+- `system_users`
 
 ---
 
@@ -30,6 +32,19 @@ Tabelas públicas encontradas no banco atualizado:
 - `pin` (text, YES NULL)
 - `email` (text, YES NULL)
 - `avatar_url` (text, YES NULL)
+
+### Tabela: `online_orders`
+- `id` (uuid, NO NULL, Default: `gen_random_uuid()`) - **PK**
+- `created_at` (timestamptz, YES NULL, Default: `now()`)
+- `client_id` (uuid, YES NULL)
+- `client_name` (text, YES NULL)
+- `client_cpf` (text, YES NULL)
+- `client_phone` (text, YES NULL)
+- `package_name` (text, YES NULL)
+- `total_amount` (numeric, NO NULL)
+- `payment_status` (varchar, NO NULL, Default: `'pending'`) -- 'pending', 'paid', 'delivered'
+- `selected_photos` (jsonb, YES NULL)
+- `updated_at` (timestamptz, YES NULL, Default: `now()`)
 
 ### Tabela: `orders`
 - `id` (uuid, NO NULL, Default: `uuid_generate_v4()`) - **PK**
@@ -89,6 +104,13 @@ Tabelas públicas encontradas no banco atualizado:
 - `whatsapp_token` (text, YES NULL)
 - `receipt_footer` (text, YES NULL, Default: `'Obrigado por visitar a Setland!...'`)
 
+### Tabela: `system_users`
+- `id` (uuid, NO NULL, FK `auth.users(id)` ON DELETE CASCADE) - **PK**
+- `created_at` (timestamptz, YES NULL, Default: `now()`)
+- `email` (text, NO NULL, UNIQUE)
+- `name` (text, NO NULL)
+- `role` (text, NO NULL, Check: `'dono'`, `'gerente'`, `'operador'`)
+
 ---
 
 ## Notas da Atualização (Auditoria Resolvida)
@@ -99,3 +121,5 @@ As discrepâncias mapeadas anteriormente foram **solucionadas** no banco de dado
 2. **`photographers` obsoleta removida:** A antiga tabela legada não aparece mais no schema atual. Tudo agora passa apenas por `employees`.
 3. **Nova Tabela `system_settings`:** Introduzida com sucesso para gerenciar de forma dinâmica configurações de Drive, WhatsApp e PDV sem precisar de hardcode no front-end.
 4. **`orders` flexível:** Adicionada coluna `photographer_name` como text para registrar o nome sem depender estritamente de joins em tabelas legadas.
+5. **Nova Tabela `system_users`:** Mapeia perfis operacionais com integridade referencial a `auth.users` do Supabase para controle de acesso (`dono`, `gerente`, `operador`) no Desktop.
+6. **Nova Tabela `online_orders`:** Gerencia vendas realizadas via Pix no Portal Web (`setland-portal`), permitindo que o robô em segundo plano do Electron despache a entrega digital.
