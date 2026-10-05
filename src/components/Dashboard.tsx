@@ -1,11 +1,47 @@
-import React, { useEffect, useState } from 'react';
-import { Camera, Clock, DollarSign, ArrowUpRight, Percent, Cloud, History, CheckCircle2, ShoppingCart } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import {
+  AlertTriangle,
+  ArrowUpRight,
+  Camera,
+  CheckCircle2,
+  Clock,
+  Cloud,
+  DollarSign,
+  FileSpreadsheet,
+  History,
+  Loader2,
+  Percent,
+  ShoppingCart,
+} from 'lucide-react';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui/select';
 import { ChartContainer, ChartTooltip, ChartTooltipContent } from '@/components/ui/chart';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table';
 import { BarChart, Bar, XAxis, ResponsiveContainer } from 'recharts';
 import { supabase } from '@/lib/supabaseClient';
+import AccountingReportModal from './AccountingReportModal';
+import {
+  EMPTY_DATASET,
+  PERIOD_OPTIONS,
+  buildPhotographerPerformance,
+  describeRange,
+  formatCurrencyBRL,
+  formatNumberBR,
+  formatPercentBR,
+  formatTimeBR,
+  isPaidOnlineOrder,
+  isPaidPdvOrder,
+  isWithinRange,
+  resolvePeriodRange,
+  summarizeDataset,
+  type AnalyticsDataset,
+  type DateRange,
+  type EmployeeRow,
+  type OnlineOrderRow,
+  type OrderRow,
+  type PeriodKey,
+  type SessionRow,
+} from '@/lib/reporting';
 
 export type UserRole = 'operador' | 'gerente' | 'dono';
 
@@ -20,94 +56,158 @@ const chartConfig = {
   },
 };
 
-function OperatorDashboard() {
-  const [metrics, setMetrics] = useState({ faturamento: 'R$ 0,00', sessoes: 0, pendentes: 0, taxa: '0%' });
-  const [photographers, setPhotographers] = useState<any[]>([]);
-  const [activities, setActivities] = useState<any[]>([]);
+interface ActivityItem {
+  id: string;
+  text: string;
+  time: string;
+}
+
+/* ========================================================================== */
+/* Carregamento dos dados                                                      */
+/* ========================================================================== */
+
+/**
+ * Busca o conjunto bruto de dados (equipe, sessões, PDV e Site) uma única vez.
+ * O recorte por período é feito em memória, o que torna o filtro instantâneo
+ * e reativo — sem novas idas ao Supabase a cada troca de período.
+ */
+function useAnalyticsDataset(scope: string) {
+  const [dataset, setDataset] = useState<AnalyticsDataset>(EMPTY_DATASET);
+  const [isLoading, setIsLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+
+  const reload = useCallback(async () => {
+    setIsLoading(true);
+    setLoadError(null);
+
+    try {
+      const [employees, sessions, orders, onlineOrders] = await Promise.all([
+        supabase.from('employees').select('*').eq('role', 'Operador').eq('status', 'Ativo'),
+        supabase.from('photo_sessions').select('*').order('created_at', { ascending: false }),
+        supabase.from('orders').select('*').eq('status', 'paid').order('created_at', { ascending: false }),
+        supabase
+          .from('online_orders')
+          .select('*')
+          .in('payment_status', ['paid', 'delivered'])
+          .order('created_at', { ascending: false }),
+      ]);
+
+      const failure = employees.error || sessions.error || orders.error || onlineOrders.error;
+      if (failure) throw new Error(failure.message);
+
+      setDataset({
+        employees: (employees.data as EmployeeRow[] | null) ?? [],
+        sessions: (sessions.data as SessionRow[] | null) ?? [],
+        orders: (orders.data as OrderRow[] | null) ?? [],
+        onlineOrders: (onlineOrders.data as OnlineOrderRow[] | null) ?? [],
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Não foi possível carregar os indicadores.';
+      setLoadError(message);
+      console.error(`[Dashboard:${scope}] Falha ao carregar dados:`, err);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [scope]);
 
   useEffect(() => {
-    async function loadDashboard() {
-      const { data: emps } = await supabase.from('employees').select('*').eq('role', 'Operador').eq('status', 'Ativo');
-      const { data: sessions } = await supabase.from('photo_sessions').select('*').order('created_at', { ascending: false });
-      const { data: orders } = await supabase.from('orders').select('*').eq('status', 'paid').order('created_at', { ascending: false });
-      const { data: onlineOrders } = await supabase.from('online_orders').select('*').in('payment_status', ['paid', 'delivered']).order('created_at', { ascending: false });
+    void reload();
+  }, [reload]);
 
-      if (emps && sessions && orders) {
-        const webOrders = onlineOrders || [];
-        
-        // Combina todas as vendas (Físicas + Web)
-        const totalFatPdv = orders.reduce((acc, o) => acc + (Number(o.total_amount) || 0), 0);
-        const totalFatWeb = webOrders.reduce((acc, o) => acc + (Number(o.total_amount) || 0), 0);
-        const totalFat = totalFatPdv + totalFatWeb;
-        const totalSalesCount = orders.length + webOrders.length;
-        
-        const totalSessoes = sessions.length;
-        const pendentes = sessions.filter(s => s.status === 'Pendente').length;
-        const taxa = totalSessoes > 0 ? Math.round((totalSalesCount / totalSessoes) * 100) : 0;
+  return { dataset, isLoading, loadError, reload };
+}
 
-        setMetrics({
-          faturamento: `R$ ${totalFat.toFixed(2).replace('.', ',')}`,
-          sessoes: totalSessoes,
-          pendentes: pendentes,
-          taxa: `${taxa}%`
-        });
+/** Atividade recente do período: últimas vendas (PDV + Site) ou sessões iniciadas. */
+function buildRecentActivities(dataset: AnalyticsDataset, range: DateRange, limit = 4): ActivityItem[] {
+  const sales = [
+    ...dataset.orders
+      .filter((order) => isPaidPdvOrder(order) && isWithinRange(order.created_at, range))
+      .map((order) => ({ id: `pdv-${order.id}`, at: order.created_at ?? '', text: 'Venda no PDV (Balcão)' })),
+    ...dataset.onlineOrders
+      .filter((order) => isPaidOnlineOrder(order) && isWithinRange(order.created_at, range))
+      .map((order) => ({ id: `site-${order.id}`, at: order.created_at ?? '', text: 'Venda Online (Site)' })),
+  ]
+    .sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime())
+    .slice(0, limit)
+    .map((item) => ({ id: item.id, text: item.text, time: formatTimeBR(item.at) }));
 
-        // Fotógrafos
-        const mappedPh = emps.map(emp => {
-          // O schema antigo tem photographer_id e o novo pode usar text no backend
-          const empSessions = sessions.filter(s => s.photographer_name === emp.name || s.photographer_id === emp.id); 
-          const sessCount = empSessions.length;
-          const empOrders = orders.filter(o => empSessions.some(s => s.id === o.session_id));
-          const empWebOrders = webOrders.filter(wo => empSessions.some(s => s.client_id === wo.client_id));
-          const converted = empOrders.length + empWebOrders.length;
-          const rate = sessCount > 0 ? Math.round((converted / sessCount) * 100) : 0;
-          
-          return {
-            id: emp.id,
-            name: emp.name,
-            avatar: emp.avatar_url || `https://ui-avatars.com/api/?name=${encodeURIComponent(emp.name)}&background=D9A45C&color=fff`,
-            sessions: sessCount,
-            converted: converted,
-            rate: rate
-          };
-        });
-        setPhotographers(mappedPh);
+  if (sales.length > 0) return sales;
 
-        // Atividades Unificadas (Misturando PDV e Site cronologicamente)
-        const combinedOrders = [
-          ...orders.map(o => ({ ...o, sourceName: 'Venda no PDV (Balcão)' })),
-          ...webOrders.map(o => ({ ...o, sourceName: `Venda Online (Site)` }))
-        ].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+  return dataset.sessions
+    .filter((session) => isWithinRange(session.created_at, range))
+    .slice(0, limit)
+    .map((session) => ({
+      id: session.id,
+      text: 'Sessão iniciada',
+      time: formatTimeBR(session.created_at),
+    }));
+}
 
-        if (combinedOrders.length > 0) {
-          const mappedAct = combinedOrders.slice(0, 4).map((o, i) => ({
-            id: o.id || i,
-            text: o.sourceName,
-            time: new Date(o.created_at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
-          }));
-          setActivities(mappedAct);
-        } else {
-          const actSess = sessions.slice(0, 4).map((s, i) => ({
-            id: s.id || i,
-            text: `Sessão iniciada`,
-            time: new Date(s.created_at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
-          }));
-          setActivities(actSess);
-        }
-      }
-    }
-    loadDashboard();
-  }, []);
+function DashboardErrorBanner({ message, onRetry }: { message: string; onRetry: () => void }) {
+  return (
+    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-2xl border border-destructive/30 bg-destructive/10 p-4 text-destructive">
+      <div className="flex items-start gap-3">
+        <AlertTriangle className="h-5 w-5 shrink-0 mt-0.5" />
+        <div className="text-sm">
+          <p className="font-semibold">Não foi possível carregar os indicadores.</p>
+          <p className="mt-0.5 opacity-90">{message}</p>
+        </div>
+      </div>
+      <button
+        type="button"
+        onClick={onRetry}
+        className="shrink-0 rounded-xl border border-destructive/30 bg-destructive/10 px-4 py-2 text-sm font-semibold hover:bg-destructive/20 transition-colors"
+      >
+        Tentar novamente
+      </button>
+    </div>
+  );
+}
+
+/* ========================================================================== */
+/* Dashboard do Operador                                                       */
+/* ========================================================================== */
+
+function OperatorDashboard() {
+  const { dataset, isLoading, loadError, reload } = useAnalyticsDataset('operador');
+
+  // O caixa acompanha o acumulado do período inteiro.
+  const range = useMemo<DateRange>(() => resolvePeriodRange('todos'), []);
+  const summary = useMemo(() => summarizeDataset(dataset, range), [dataset, range]);
+  const photographers = useMemo(() => buildPhotographerPerformance(dataset, range), [dataset, range]);
+  const activities = useMemo(() => buildRecentActivities(dataset, range), [dataset, range]);
 
   const metricsData = [
-    { title: 'Faturamento', value: metrics.faturamento, trend: '', icon: DollarSign },
-    { title: 'Total de Sessões', value: metrics.sessoes.toString(), trend: '', icon: Camera },
-    { title: 'Aguardando Decisão', value: metrics.pendentes.toString(), trend: '', icon: Clock },
-    { title: 'Taxa de Conversão', value: metrics.taxa, trend: '', icon: Percent }
+    {
+      title: 'Faturamento',
+      value: formatCurrencyBRL(summary.totalRevenue),
+      trend: '',
+      icon: DollarSign,
+    },
+    {
+      title: 'Total de Sessões',
+      value: summary.totalSessions.toString(),
+      trend: '',
+      icon: Camera,
+    },
+    {
+      title: 'Aguardando Decisão',
+      value: summary.pendingSessions.toString(),
+      trend: '',
+      icon: Clock,
+    },
+    {
+      title: 'Taxa de Conversão',
+      value: formatPercentBR(summary.conversionRate, 0),
+      trend: '',
+      icon: Percent,
+    },
   ];
 
   return (
     <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500 ease-out pt-4">
+      {loadError && <DashboardErrorBanner message={loadError} onRetry={() => void reload()} />}
+
       {/* 1. Grid de Métricas Topo */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6">
         {metricsData.map((metric, i) => {
@@ -129,6 +229,11 @@ function OperatorDashboard() {
 
                 <h3 className="text-muted-foreground text-sm font-medium mb-1">{metric.title}</h3>
                 <p className="text-2xl font-bold text-foreground tracking-tight font-mono tabular-figures">{metric.value}</p>
+                {metric.title === 'Taxa de Conversão' && (
+                  <p className="text-[11px] text-muted-foreground mt-1">
+                    {summary.convertedSessions} de {summary.totalSessions} sessão(ões)
+                  </p>
+                )}
               </CardContent>
             </Card>
           );
@@ -141,7 +246,7 @@ function OperatorDashboard() {
         <Card className="lg:col-span-7 shadow-sm lux-card dark:bg-white/[0.03] dark:backdrop-blur-xl dark:border-white/10 flex flex-col transition-lux">
           <CardHeader className="pb-4">
             <CardTitle className="text-lg font-semibold text-foreground">Desempenho da Equipe</CardTitle>
-            <p className="text-sm text-muted-foreground mt-1">Sessões e taxa de conversão diária.</p>
+            <p className="text-sm text-muted-foreground mt-1">Sessões e taxa de conversão por sessão.</p>
           </CardHeader>
 
           <CardContent className="flex-1">
@@ -170,14 +275,14 @@ function OperatorDashboard() {
                         <TableCell className="text-center font-mono text-sm">{photographer.sessions}</TableCell>
                         <TableCell className="text-center font-mono text-sm">{photographer.converted}</TableCell>
                         <TableCell className={`text-right font-mono font-bold text-sm ${photographer.rate >= 60 ? 'text-primary' : 'text-muted-foreground'}`}>
-                          {photographer.rate}%
+                          {formatPercentBR(photographer.rate, 0)}
                         </TableCell>
                       </TableRow>
                     ))
                   ) : (
                     <TableRow>
                       <TableCell colSpan={4} className="text-center py-6 text-muted-foreground">
-                        Nenhum dado encontrado
+                        {isLoading ? 'Carregando dados...' : 'Nenhum dado encontrado'}
                       </TableCell>
                     </TableRow>
                   )}
@@ -238,74 +343,34 @@ function OperatorDashboard() {
   );
 }
 
+/* ========================================================================== */
+/* Visão Executiva (Gerente / Dono)                                            */
+/* ========================================================================== */
+
 function MasterDashboard() {
-  const [photographers, setPhotographers] = useState<any[]>([]);
-  const [activities, setActivities] = useState<any[]>([]);
-  const [chartDataState, setChartDataState] = useState<any[]>([]);
-  const [kpis, setKpis] = useState({ faturamento: 0, ticketMedio: 0, conversao: 0 });
+  const { dataset, isLoading, loadError, reload } = useAnalyticsDataset('executivo');
 
-  useEffect(() => {
-    async function loadAnalytics() {
-      const { data: emps } = await supabase.from('employees').select('*').eq('role', 'Operador').eq('status', 'Ativo');
-      const { data: sessions } = await supabase.from('photo_sessions').select('*').order('created_at', { ascending: false });
-      const { data: orders } = await supabase.from('orders').select('*').eq('status', 'paid').order('created_at', { ascending: false });
-      const { data: onlineOrders } = await supabase.from('online_orders').select('*').in('payment_status', ['paid', 'delivered']).order('created_at', { ascending: false });
+  const [period, setPeriod] = useState<PeriodKey>('hoje');
+  const [isReportOpen, setIsReportOpen] = useState(false);
 
-      if (emps && sessions && orders) {
-        const webOrders = onlineOrders || [];
-        const mapped = emps.map(emp => {
-          const empSessions = sessions.filter(s => s.photographer_name === emp.name || s.photographer_id === emp.id);
-          const totalSessions = empSessions.length;
-          const empOrders = orders.filter(o => empSessions.some(s => s.id === o.session_id));
-          const empWebOrders = webOrders.filter(wo => empSessions.some(s => s.client_id === wo.client_id));
-          
-          let digital = 0;
-          let printed = 0;
-          let soldTotal = 0;
+  // Filtro reativo: trocar o período recalcula tudo em memória, sem refetch.
+  const range = useMemo<DateRange>(() => resolvePeriodRange(period), [period]);
 
-          empOrders.forEach(o => {
-            soldTotal += Number(o.total_amount) || 0;
-          });
-          empWebOrders.forEach(o => {
-            soldTotal += Number(o.total_amount) || 0;
-          });
-          
-          const converted = empOrders.length + empWebOrders.length;
-          const allEmpOrders = [...empOrders, ...empWebOrders].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+  const summary = useMemo(() => summarizeDataset(dataset, range), [dataset, range]);
+  const photographers = useMemo(() => buildPhotographerPerformance(dataset, range), [dataset, range]);
+  const activities = useMemo(() => buildRecentActivities(dataset, range), [dataset, range]);
 
-          return {
-            id: emp.id,
-            name: emp.name,
-            avatar: emp.avatar_url || `https://ui-avatars.com/api/?name=${encodeURIComponent(emp.name)}&background=D9A45C&color=fff`,
-            sessions: totalSessions,
-            converted: converted,
-            rate: totalSessions > 0 ? Math.round((converted / totalSessions) * 100) : 0,
-            soldTotal: `R$ ${soldTotal.toFixed(2).replace('.', ',')}`,
-            digital: digital,
-            printed: printed,
-            lastSale: allEmpOrders.length > 0 ? new Date(allEmpOrders[0].created_at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : '-'
-          };
-        });
-        setPhotographers(mapped);
+  const chartData = useMemo(
+    () => [
+      { category: 'PDV (Parque)', vendas: summary.pdvRevenue, fill: 'var(--theme-accent)' },
+      // Token analítico: royal no claro, ciano no escuro
+      { category: 'Site (Online)', vendas: summary.onlineRevenue, fill: 'var(--theme-info)' },
+    ],
+    [summary.pdvRevenue, summary.onlineRevenue],
+  );
 
-        const totalFatPdv = orders.reduce((acc, o) => acc + (Number(o.total_amount) || 0), 0);
-        const totalFatWeb = webOrders.reduce((acc, o) => acc + (Number(o.total_amount) || 0), 0);
-        const totalFat = totalFatPdv + totalFatWeb;
-        const totalSalesCount = orders.length + webOrders.length;
-        
-        const ticketMedio = totalSalesCount > 0 ? totalFat / totalSalesCount : 0;
-        const conversao = sessions.length > 0 ? Math.round((totalSalesCount / sessions.length) * 100) : 0;
-        
-        setKpis({ faturamento: totalFat, ticketMedio, conversao });
-
-        setChartDataState([
-          { category: "PDV (Parque)", vendas: totalFatPdv, fill: "var(--theme-accent)" },
-          { category: "Site (Online)", vendas: totalFatWeb, fill: "var(--theme-info)" } // Token analítico: royal no claro, ciano no escuro
-        ]);
-      }
-    }
-    loadAnalytics();
-  }, []);
+  const hasRevenue = summary.pdvRevenue > 0 || summary.onlineRevenue > 0;
+  const rangeLabel = describeRange(range);
 
   return (
     <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500 ease-out pt-4">
@@ -313,22 +378,37 @@ function MasterDashboard() {
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <div>
           <h2 className="text-2xl font-semibold text-foreground">Visão Executiva</h2>
-          <p className="text-muted-foreground text-sm mt-1">Acompanhamento de vendas e conversão global.</p>
+          <p className="text-muted-foreground text-sm mt-1">
+            Acompanhamento de vendas e conversão global · <span className="font-medium text-foreground">{rangeLabel}</span>
+          </p>
         </div>
-        <div className="w-48">
-          <Select defaultValue="hoje">
-            <SelectTrigger className="bg-card h-11 shadow-sm">
-              <SelectValue placeholder="Selecione o período" />
-            </SelectTrigger>
-            <SelectContent className="bg-card">
-              <SelectItem value="hoje">Hoje</SelectItem>
-              <SelectItem value="semana">Última Semana</SelectItem>
-              <SelectItem value="mes">Este Mês</SelectItem>
-              <SelectItem value="30dias">Últimos 30 dias</SelectItem>
-            </SelectContent>
-          </Select>
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={() => setIsReportOpen(true)}
+            className="flex items-center gap-2 h-11 px-4 rounded-xl border border-border bg-card text-sm font-medium text-foreground hover:bg-muted transition-colors shadow-sm"
+          >
+            <FileSpreadsheet className="h-4 w-4 text-primary" />
+            Fechamento ERP
+          </button>
+          <div className="w-48">
+            <Select value={period} onValueChange={(value) => setPeriod(value as PeriodKey)}>
+              <SelectTrigger className="bg-card h-11 shadow-sm">
+                <SelectValue placeholder="Selecione o período" />
+              </SelectTrigger>
+              <SelectContent className="bg-card">
+                {PERIOD_OPTIONS.map((option) => (
+                  <SelectItem key={option.value} value={option.value}>
+                    {option.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
         </div>
       </div>
+
+      {loadError && <DashboardErrorBanner message={loadError} onRetry={() => void reload()} />}
 
       {/* GRID DE KPIs (3 Colunas) */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
@@ -340,7 +420,13 @@ function MasterDashboard() {
             </div>
           </CardHeader>
           <CardContent>
-            <div className="text-3xl font-bold font-mono tabular-figures text-foreground tracking-tight">R$ {kpis.faturamento.toFixed(2).replace('.', ',')}</div>
+            <div className="text-3xl font-bold font-mono tabular-figures text-foreground tracking-tight">
+              {formatCurrencyBRL(summary.totalRevenue)}
+            </div>
+            <p className="text-xs text-muted-foreground mt-1.5">
+              {summary.salesCount} transação(ões) · PDV {formatCurrencyBRL(summary.pdvRevenue)} · Site{' '}
+              {formatCurrencyBRL(summary.onlineRevenue)}
+            </p>
           </CardContent>
         </Card>
 
@@ -352,7 +438,12 @@ function MasterDashboard() {
             </div>
           </CardHeader>
           <CardContent>
-            <div className="text-3xl font-bold font-mono tabular-figures text-foreground tracking-tight">{kpis.conversao}%</div>
+            <div className="text-3xl font-bold font-mono tabular-figures text-foreground tracking-tight">
+              {formatPercentBR(summary.conversionRate, 1)}
+            </div>
+            <p className="text-xs text-muted-foreground mt-1.5">
+              {summary.convertedSessions} de {summary.totalSessions} sessão(ões) convertida(s)
+            </p>
           </CardContent>
         </Card>
 
@@ -364,14 +455,17 @@ function MasterDashboard() {
             </div>
           </CardHeader>
           <CardContent>
-            <div className="text-3xl font-bold font-mono tabular-figures text-foreground tracking-tight">R$ {kpis.ticketMedio.toFixed(2).replace('.', ',')}</div>
+            <div className="text-3xl font-bold font-mono tabular-figures text-foreground tracking-tight">
+              {formatCurrencyBRL(summary.ticketAverage)}
+            </div>
+            <p className="text-xs text-muted-foreground mt-1.5">{summary.pendingSessions} sessão(ões) aguardando decisão</p>
           </CardContent>
         </Card>
       </div>
 
       {/* SESSÃO CENTRAL: GRÁFICO E PERFORMANCE */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-        
+
         {/* BLOCO DE GRÁFICO */}
         <Card className="lg:col-span-5 shadow-sm lux-card dark:bg-white/[0.03] dark:backdrop-blur-xl dark:border-white/10 flex flex-col transition-lux">
           <CardHeader>
@@ -380,24 +474,26 @@ function MasterDashboard() {
           <CardContent className="flex-1 pb-4">
             <ChartContainer config={chartConfig} className="min-h-[250px] w-full">
               <ResponsiveContainer width="100%" height="100%">
-                {chartDataState.length > 0 ? (
-                  <BarChart data={chartDataState} margin={{ top: 10, left: -20, right: 10, bottom: 0 }}>
-                    <XAxis 
-                      dataKey="category" 
+                {hasRevenue ? (
+                  <BarChart data={chartData} margin={{ top: 10, left: -20, right: 10, bottom: 0 }}>
+                    <XAxis
+                      dataKey="category"
                       tickLine={false}
                       axisLine={false}
                       tickMargin={12}
                       tick={{ fill: 'var(--theme-muted)' }}
                       fontSize={12}
                     />
-                    <ChartTooltip 
-                      cursor={{ fill: 'var(--theme-bg)', opacity: 0.5 }} 
-                      content={<ChartTooltipContent hideLabel />} 
+                    <ChartTooltip
+                      cursor={{ fill: 'var(--theme-bg)', opacity: 0.5 }}
+                      content={<ChartTooltipContent hideLabel />}
                     />
                     <Bar dataKey="vendas" radius={[6, 6, 0, 0]} />
                   </BarChart>
                 ) : (
-                  <div className="flex h-full items-center justify-center text-muted-foreground text-sm">Sem dados para exibir</div>
+                  <div className="flex h-full items-center justify-center text-muted-foreground text-sm">
+                    {isLoading ? 'Carregando dados...' : 'Sem dados para exibir'}
+                  </div>
                 )}
               </ResponsiveContainer>
             </ChartContainer>
@@ -408,6 +504,9 @@ function MasterDashboard() {
         <Card className="lg:col-span-7 shadow-sm">
           <CardHeader>
             <CardTitle className="text-lg font-semibold text-foreground">Performance da Equipe</CardTitle>
+            <p className="text-sm text-muted-foreground mt-1">
+              Faturamento atribuído à sessão · {rangeLabel}
+            </p>
           </CardHeader>
           <CardContent>
             <div className="overflow-x-auto">
@@ -415,8 +514,10 @@ function MasterDashboard() {
                 <TableHeader>
                   <TableRow>
                     <TableHead>Fotógrafo</TableHead>
-                    <TableHead className="text-center">Digitais</TableHead>
+                    <TableHead className="text-center">Sessões</TableHead>
+                    <TableHead className="text-center">Convertidas</TableHead>
                     <TableHead className="text-center">Impressas</TableHead>
+                    <TableHead className="text-center">Digitais</TableHead>
                     <TableHead className="text-right">Total (R$)</TableHead>
                     <TableHead className="text-right">Última Venda</TableHead>
                   </TableRow>
@@ -430,19 +531,38 @@ function MasterDashboard() {
                             <div className="w-10 h-10 rounded-full overflow-hidden border border-border dark:border-white/15 ring-1 ring-black/5 dark:ring-white/10 shadow-sm">
                               <img src={photographer.avatar} alt={photographer.name} className="w-full h-full object-cover" />
                             </div>
-                            <span className="font-medium text-foreground">{photographer.name}</span>
+                            <div>
+                              <span className="font-medium text-foreground block">{photographer.name}</span>
+                              <span className="text-[11px] text-muted-foreground font-mono tabular-figures">
+                                {photographer.converted}/{photographer.sessions} sessões ·{' '}
+                                {formatPercentBR(photographer.rate, 0)}
+                              </span>
+                            </div>
                           </div>
                         </TableCell>
-                        <TableCell className="text-center font-mono tabular-figures">{photographer.digital}</TableCell>
+                        <TableCell className="text-center font-mono tabular-figures">{photographer.sessions}</TableCell>
+                        <TableCell className="text-center font-mono tabular-figures">{photographer.converted}</TableCell>
                         <TableCell className="text-center font-mono tabular-figures">{photographer.printed}</TableCell>
-                        <TableCell className="text-right font-mono tabular-figures font-bold text-foreground">{photographer.soldTotal}</TableCell>
-                        <TableCell className="text-right text-muted-foreground text-sm font-mono tabular-figures">{photographer.lastSale}</TableCell>
+                        <TableCell className="text-center font-mono tabular-figures">{photographer.digital}</TableCell>
+                        <TableCell className="text-right font-mono tabular-figures font-bold text-foreground">
+                          {formatCurrencyBRL(photographer.revenue)}
+                        </TableCell>
+                        <TableCell className="text-right text-muted-foreground text-sm font-mono tabular-figures">
+                          {photographer.lastSaleAt ? formatTimeBR(photographer.lastSaleAt) : '-'}
+                        </TableCell>
                       </TableRow>
                     ))
                   ) : (
                     <TableRow>
-                      <TableCell colSpan={5} className="text-center py-6 text-muted-foreground">
-                        Nenhum dado encontrado
+                      <TableCell colSpan={7} className="text-center py-6 text-muted-foreground">
+                        {isLoading ? (
+                          <span className="inline-flex items-center gap-2">
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                            Carregando dados...
+                          </span>
+                        ) : (
+                          'Nenhum dado encontrado'
+                        )}
                       </TableCell>
                     </TableRow>
                   )}
@@ -453,6 +573,40 @@ function MasterDashboard() {
         </Card>
 
       </div>
+
+      {/* ATIVIDADE RECENTE DO PERÍODO */}
+      <Card className="shadow-sm">
+        <CardHeader className="pb-4">
+          <CardTitle className="text-base font-semibold text-foreground flex items-center gap-2">
+            <History className="h-4 w-4 text-muted-foreground" />
+            Atividade Recente
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          {activities.length > 0 ? (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              {activities.map((item) => (
+                <div key={item.id} className="rounded-xl border border-border-dashed bg-background/60 p-3">
+                  <p className="text-xs font-medium text-foreground leading-tight">{item.text}</p>
+                  <p className="text-[10px] text-muted-foreground mt-1 font-mono tabular-figures">{item.time}</p>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="text-sm text-muted-foreground text-center py-4">Sem atividades no período selecionado.</p>
+          )}
+          <p className="text-[11px] text-muted-foreground mt-4">
+            Total do período: <span className="font-medium text-foreground">{formatNumberBR(summary.salesCount, 0)}</span>{' '}
+            venda(s) registrada(s).
+          </p>
+        </CardContent>
+      </Card>
+
+      <AccountingReportModal
+        isOpen={isReportOpen}
+        onClose={() => setIsReportOpen(false)}
+        initialPeriod={period}
+      />
     </div>
   );
 }
