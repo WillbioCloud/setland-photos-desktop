@@ -152,12 +152,12 @@ export default function Historico() {
         </div>
       </div>
 
-      {/* Tabela Container */}
-      <Card className="border-border shadow-sm overflow-hidden flex flex-col">
-        <CardContent className="p-0">
-          <div className="overflow-x-auto">
+      {/* Tabela Container Padronizado */}
+      <Card className="border-border shadow-sm overflow-hidden flex flex-col h-[calc(100vh-220px)] min-h-[480px]">
+        <CardContent className="p-0 flex-1 flex flex-col min-h-0 overflow-hidden">
+          <div className="flex-1 overflow-y-auto no-scrollbar [&_[data-slot=table-container]]:overflow-visible">
             <Table>
-              <TableHeader>
+              <TableHeader className="sticky top-0 z-10 bg-card shadow-sm">
                 <TableRow className="bg-muted/50 border-b-border-dashed">
                   <TableHead className="px-6 py-4 text-xs font-semibold text-muted-foreground uppercase tracking-wider">ID</TableHead>
                   <TableHead className="px-6 py-4 text-xs font-semibold text-muted-foreground uppercase tracking-wider">Cliente</TableHead>
@@ -243,7 +243,7 @@ export default function Historico() {
           </div>
   
           {/* Rodapé Tabela */}
-          <div className="px-6 py-4 bg-muted/30 flex items-center justify-between">
+          <div className="px-6 py-4 bg-muted/30 border-t border-border-dashed flex items-center justify-between shrink-0">
             <span className="text-sm text-muted-foreground">
               Exibindo <strong className="text-foreground font-medium">{filteredHistory.length}</strong> de <strong className="text-foreground font-medium">{history.length}</strong> pedidos
             </span>
