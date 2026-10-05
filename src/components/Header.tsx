@@ -1,6 +1,31 @@
 import React from 'react';
-import { UserPlus, LayoutDashboard, Users, Package, ShoppingCart, History, Lock, LogOut, Briefcase, Settings } from 'lucide-react';
+import { UserPlus, LayoutDashboard, Users, Package, ShoppingCart, History, Lock, LogOut, Briefcase, Settings, Sun, Moon, Monitor } from 'lucide-react';
 import watermarkLogo from '../assets/watermark_setland.png';
+import { useTheme, type ThemeMode } from '@/hooks/useTheme';
+
+const THEME_META: Record<ThemeMode, { icon: typeof Sun; label: string; hint: string }> = {
+  light: { icon: Sun, label: 'Claro', hint: 'Operação diurna' },
+  dark: { icon: Moon, label: 'Escuro', hint: 'Padrão quiosque' },
+  system: { icon: Monitor, label: 'Sistema', hint: 'Segue o SO' },
+};
+
+/** Seletor de tema (Claro → Escuro → Sistema) com transição animada de ícones. Visual puro. */
+function ThemeSelector() {
+  const { theme, cycleTheme } = useTheme();
+  const { icon: Icon, label, hint } = THEME_META[theme];
+  return (
+    <button
+      onClick={cycleTheme}
+      title={`Tema: ${label} (${hint}) — clique para alternar`}
+      aria-label={`Alternar tema. Atual: ${label}`}
+      className="relative p-2 xl:p-2.5 rounded-full text-brand-muted hover:text-brand-accent hover:bg-brand-accent/10 transition-lux flex items-center justify-center border border-transparent hover:border-brand-accent/20 overflow-hidden"
+    >
+      <span key={theme} className="animate-theme-icon flex items-center justify-center">
+        <Icon className="h-4 w-4" />
+      </span>
+    </button>
+  );
+}
 
 export type UserRole = 'operador' | 'gerente' | 'dono';
 
@@ -33,17 +58,17 @@ export default function Header({ activeTab, setActiveTab, onAdminClick, onNewCli
   return (
     <header className="px-4 xl:px-6 py-4 xl:py-5 flex items-center justify-between gap-2 overflow-hidden sticky top-0 z-30">
       {/* Bloco Esquerdo: Logo */}
-      <div className="bg-brand-surface shadow-sm px-4 xl:px-6 py-2 xl:py-2.5 rounded-full flex items-center gap-2 xl:gap-3 shrink-0">
-        <img 
-          src={watermarkLogo} 
-          alt="Setland" 
-          className="h-6 xl:h-7 w-auto object-contain"
+      <div className="bg-brand-surface dark:bg-white/[0.04] dark:backdrop-blur-xl dark:border dark:border-white/10 dark:lux-top-highlight shadow-sm dark:shadow-none lux-card px-4 xl:px-6 py-2 xl:py-2.5 rounded-full flex items-center gap-2 xl:gap-3 shrink-0 transition-lux">
+        <img
+          src={watermarkLogo}
+          alt="Setland"
+          className="h-6 xl:h-7 w-auto object-contain dark:drop-shadow-[0_0_10px_rgba(217,164,92,0.45)]"
         />
         <h1 className="text-lg xl:text-xl font-bold text-brand-ink tracking-tight hidden sm:block">Setland</h1>
       </div>
 
       {/* Bloco Central: Navegação */}
-      <nav className="bg-brand-surface shadow-sm p-1 xl:p-1.5 rounded-full flex items-center justify-center gap-0.5 xl:gap-1 flex-1 min-w-0">
+      <nav className="bg-brand-surface dark:bg-white/[0.04] dark:backdrop-blur-xl dark:border dark:border-white/10 shadow-sm dark:shadow-none lux-card p-1 xl:p-1.5 rounded-full flex items-center justify-center gap-0.5 xl:gap-1 flex-1 min-w-0 transition-lux">
         {menuItems.map((item) => {
           const Icon = item.icon;
           const isActive = activeTab === item.id;
@@ -51,10 +76,10 @@ export default function Header({ activeTab, setActiveTab, onAdminClick, onNewCli
             <button
               key={item.id}
               onClick={() => setActiveTab(item.id)}
-              className={`flex items-center gap-1.5 xl:gap-2 px-3 xl:px-6 py-2 xl:py-2.5 rounded-full font-medium transition-all duration-300
-                ${isActive 
-                  ? 'bg-brand-accent text-brand-accent-fg shadow-sm' 
-                  : 'text-brand-muted hover:text-brand-ink hover:bg-brand-bg/50'
+              className={`flex items-center gap-1.5 xl:gap-2 px-3 xl:px-6 py-2 xl:py-2.5 rounded-full font-medium transition-lux
+                ${isActive
+                  ? 'bg-brand-accent text-brand-accent-fg shadow-sm gold-glow'
+                  : 'text-brand-muted hover:text-brand-ink hover:bg-brand-accent/10 dark:hover:bg-white/[0.06]'
                 }`}
             >
               <Icon className="h-4 w-4 shrink-0" />
@@ -65,7 +90,7 @@ export default function Header({ activeTab, setActiveTab, onAdminClick, onNewCli
       </nav>
 
       {/* Bloco Direito: Terminal e Acesso Gerencial */}
-      <div className="bg-brand-surface shadow-sm px-2 xl:px-3 py-1.5 xl:py-2 rounded-full flex items-center gap-2 xl:gap-4 shrink-0">
+      <div className="bg-brand-surface dark:bg-white/[0.04] dark:backdrop-blur-xl dark:border dark:border-white/10 shadow-sm dark:shadow-none lux-card px-2 xl:px-3 py-1.5 xl:py-2 rounded-full flex items-center gap-2 xl:gap-4 shrink-0 transition-lux">
         
         {/* Botão rápido para o Caixa abrir um novo atendimento */}
         <button 
@@ -78,10 +103,15 @@ export default function Header({ activeTab, setActiveTab, onAdminClick, onNewCli
 
         <div className="h-6 w-[1px] bg-brand-border-dashed"></div>
 
+        {/* Seletor de tema: Claro / Escuro / Sistema */}
+        <ThemeSelector />
+
+        <div className="h-6 w-[1px] bg-brand-border-dashed"></div>
+
         {/* Indicador de Terminal e Controle de Acesso */}
         <div className="flex items-center gap-2 xl:gap-3 pr-1 xl:pr-2">
           <div className="flex flex-col items-end justify-center h-full pt-1 hidden sm:flex">
-             <span className="text-[10px] xl:text-sm font-mono text-brand-muted tracking-tight leading-none mb-0.5">
+             <span className="text-[10px] xl:text-sm font-mono tabular-figures text-brand-muted tracking-tight leading-none mb-0.5">
                Terminal 01
              </span>
              {userRole !== 'operador' && (
