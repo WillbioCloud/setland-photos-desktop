@@ -144,7 +144,7 @@ function App() {
   }
 
   return (
-    <div className="min-h-screen bg-brand-bg text-brand-ink font-sans selection:bg-brand-accent/30 flex flex-col">
+    <div className="min-h-screen bg-brand-bg text-brand-ink font-sans selection:bg-brand-accent/30 flex flex-col transition-colors duration-300 ease-out">
       <Header 
         activeTab={activeTab} 
         setActiveTab={setActiveTab} 

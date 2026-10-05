@@ -249,10 +249,10 @@ export default function PDV() {
             return (
               <Card
                 key={order.id}
-                className={`border transition-all overflow-hidden flex items-center p-4 gap-4 cursor-pointer hover:shadow-md ${isSelected ? 'border-primary shadow-md ring-1 ring-primary' : 'border-border'}`}
+                className={`border transition-lux overflow-hidden flex items-center p-4 gap-4 cursor-pointer bg-card dark:bg-white/[0.03] dark:backdrop-blur-xl hover:shadow-md hover:-translate-y-px ${isSelected ? 'border-primary shadow-md gold-glow ring-1 ring-primary dark:border-brand-accent/60' : 'border-border dark:border-white/10 hover:border-primary/40'}`}
                 onClick={() => !isSelected && setActiveOrder(order)}
               >
-                <div className="w-16 h-16 rounded-xl overflow-hidden bg-muted shrink-0">
+                <div className="w-16 h-16 rounded-xl overflow-hidden bg-muted shrink-0 ring-1 ring-black/5 dark:ring-white/15 shadow-sm">
                   {order.photo_sessions?.cover_photo_url ? (
                     <img src={order.photo_sessions.cover_photo_url.replace(/\\/g, '/')} alt="Cover" className="w-full h-full object-cover" />
                   ) : (
@@ -267,19 +267,19 @@ export default function PDV() {
                     {order.photo_sessions?.clients?.name || 'Cliente Desconhecido'}
                   </h3>
                   <p className="text-xs text-muted-foreground mt-0.5">Itens do Pedido</p>
-                  <p className="text-sm font-medium mt-1">
+                  <p className="text-sm font-medium mt-1 font-mono tabular-figures">
                     {order.printed_count} Impressas • {order.digital_count} Digitais
                   </p>
                 </div>
 
                 <div className="flex flex-col items-end gap-3">
-                  <span className="text-lg font-bold text-foreground font-mono">
+                  <span className="text-lg font-bold text-foreground font-mono tabular-figures">
                     R$ {Number(order.total_amount).toFixed(2).replace('.', ',')}
                   </span>
 
                   <button
                     disabled={isSelected}
-                    className={`px-4 py-2 rounded-xl font-bold transition-all text-xs shadow-sm flex items-center gap-1.5 ${isSelected ? 'bg-muted text-muted-foreground cursor-not-allowed border border-border' : 'bg-primary text-primary-foreground hover:opacity-90'}`}
+                    className={`px-4 py-2 rounded-xl font-bold transition-lux text-xs shadow-sm flex items-center gap-1.5 active:scale-95 ${isSelected ? 'bg-muted text-muted-foreground cursor-not-allowed border border-border' : 'bg-primary text-primary-foreground hover:opacity-90 gold-glow'}`}
                   >
                     {isSelected ? <Check className="w-4 h-4" /> : <ArrowRight className="w-4 h-4" />}
                     {isSelected ? 'No Carrinho' : 'Atender Cliente'}
@@ -301,7 +301,7 @@ export default function PDV() {
 
       {/* Direita: Carrinho */}
       <div className="col-span-5 xl:col-span-4 h-full pb-4 xl:pb-6">
-        <Card className="flex flex-col h-full rounded-[2rem] border-border shadow-sm overflow-hidden">
+        <Card className="flex flex-col h-full rounded-[2rem] border-border dark:border-white/10 dark:bg-white/[0.04] dark:backdrop-blur-xl dark:lux-top-highlight shadow-sm lux-card overflow-hidden transition-lux">
 
           <CardHeader className="p-4 xl:p-6 border-b border-border-dashed shrink-0 space-y-3 xl:space-y-4">
             <div className="flex items-center justify-between">
@@ -312,7 +312,7 @@ export default function PDV() {
             </div>
           </CardHeader>
 
-          <CardContent className="flex-1 p-4 xl:p-6 overflow-y-auto no-scrollbar space-y-4 xl:space-y-5 bg-card">
+          <CardContent className="flex-1 p-4 xl:p-6 overflow-y-auto no-scrollbar space-y-4 xl:space-y-5 bg-transparent">
             {!activeOrder ? (
               <div className="h-full flex flex-col items-center justify-center text-center opacity-50">
                 <ShoppingCart className="h-10 w-10 xl:h-12 xl:w-12 text-muted-foreground mb-4" />
@@ -339,14 +339,14 @@ export default function PDV() {
 
                   <div className="space-y-3">
                     {pricingDetail?.items.map((item, idx) => (
-                      <div key={idx} className="flex justify-between items-center bg-secondary/20 p-3 rounded-lg border border-border">
+                      <div key={idx} className="flex justify-between items-center bg-secondary/20 dark:bg-white/[0.04] p-3 rounded-xl border border-border dark:border-white/10 transition-lux hover:border-primary/30">
                         <div>
                           <p className="font-medium text-sm text-brand-ink">{item.name}</p>
-                          <p className="text-xs text-brand-muted mt-0.5">
+                          <p className="text-xs text-brand-muted mt-0.5 font-mono tabular-figures">
                             {item.quantity}x de R$ {item.unitPrice.toFixed(2).replace('.', ',')}
                           </p>
                         </div>
-                        <span className="font-mono font-bold">R$ {item.subtotal.toFixed(2).replace('.', ',')}</span>
+                        <span className="font-mono tabular-figures font-bold">R$ {item.subtotal.toFixed(2).replace('.', ',')}</span>
                       </div>
                     ))}
                   </div>
@@ -355,11 +355,11 @@ export default function PDV() {
             )}
           </CardContent>
 
-          <div className="p-4 xl:p-5 bg-secondary/30 border-t border-border-dashed shrink-0">
+          <div className="p-4 xl:p-5 bg-secondary/30 dark:bg-white/[0.03] dark:backdrop-blur-xl border-t border-border-dashed dark:border-white/10 shrink-0">
             <div className="space-y-2 mb-3 xl:mb-4">
-              <div className="flex justify-between items-end pt-3 border-t border-border-dashed mt-2">
+              <div className="flex justify-between items-end pt-3 border-t border-border-dashed dark:border-white/10 mt-2">
                 <span className="text-sm xl:text-base font-semibold text-foreground">Total a Cobrar</span>
-                <span className="text-2xl xl:text-3xl font-bold text-primary font-mono tracking-tight">
+                <span className="text-2xl xl:text-3xl font-bold text-primary font-mono tabular-figures tracking-tight dark:drop-shadow-[0_0_14px_rgba(217,164,92,0.45)]">
                   R$ {activeOrder ? Number(activeOrder.total_amount).toFixed(2).replace('.', ',') : '0,00'}
                 </span>
               </div>
@@ -387,7 +387,7 @@ export default function PDV() {
               <button
                 onClick={() => handleCheckout('pix')}
                 disabled={!activeOrder}
-                className="w-full mb-1.5 xl:mb-2 flex items-center justify-center gap-2 bg-primary hover:opacity-90 disabled:opacity-50 text-primary-foreground px-4 py-2.5 xl:py-3 rounded-xl font-bold transition-all active:scale-95 text-xs xl:text-sm shadow-sm"
+                className="w-full mb-1.5 xl:mb-2 flex items-center justify-center gap-2 bg-primary hover:opacity-90 disabled:opacity-50 disabled:shadow-none text-primary-foreground px-4 py-2.5 xl:py-3 rounded-xl font-bold transition-lux active:scale-[0.98] text-xs xl:text-sm shadow-sm gold-glow"
               >
                 <QrCode className="h-3.5 w-3.5 xl:h-4 xl:w-4" />
                 Pagar com Pix
@@ -397,7 +397,7 @@ export default function PDV() {
                 <button
                   onClick={() => handleCheckout('cartao')}
                   disabled={!activeOrder}
-                  className="flex items-center justify-center gap-1.5 xl:gap-2 bg-card hover:bg-background disabled:opacity-50 border border-border text-foreground px-3 xl:px-4 py-2 xl:py-2.5 rounded-xl font-medium transition-all active:scale-95 text-[10px] xl:text-xs shadow-sm"
+                  className="flex items-center justify-center gap-1.5 xl:gap-2 bg-card dark:bg-white/[0.05] hover:bg-background dark:hover:bg-white/[0.09] disabled:opacity-50 border border-border dark:border-white/10 text-foreground px-3 xl:px-4 py-2 xl:py-2.5 rounded-xl font-medium transition-lux active:scale-[0.98] text-[10px] xl:text-xs shadow-sm"
                 >
                   <CreditCard className="h-3.5 w-3.5 xl:h-4 xl:w-4" />
                   Cartão
@@ -405,7 +405,7 @@ export default function PDV() {
                 <button
                   onClick={() => handleCheckout('dinheiro')}
                   disabled={!activeOrder}
-                  className="flex items-center justify-center gap-1.5 xl:gap-2 bg-card hover:bg-background disabled:opacity-50 border border-border text-foreground px-3 xl:px-4 py-2 xl:py-2.5 rounded-xl font-medium transition-all active:scale-95 text-[10px] xl:text-xs shadow-sm"
+                  className="flex items-center justify-center gap-1.5 xl:gap-2 bg-card dark:bg-white/[0.05] hover:bg-background dark:hover:bg-white/[0.09] disabled:opacity-50 border border-border dark:border-white/10 text-foreground px-3 xl:px-4 py-2 xl:py-2.5 rounded-xl font-medium transition-lux active:scale-[0.98] text-[10px] xl:text-xs shadow-sm"
                 >
                   <Banknote className="h-3.5 w-3.5 xl:h-4 xl:w-4" />
                   Dinheiro
