@@ -202,13 +202,13 @@ export default function Clientes() {
         </div>
       </div>
 
-      {/* DataGrid Container */}
-      <Card className="shadow-sm overflow-hidden flex flex-col">
+      {/* DataGrid Container Padronizado */}
+      <Card className="shadow-sm overflow-hidden flex flex-col h-[calc(100vh-220px)] min-h-[480px]">
         {filteredClients.length > 0 ? (
-          <CardContent className="p-0">
-            <div className="overflow-x-auto">
+          <CardContent className="p-0 flex-1 flex flex-col min-h-0 overflow-hidden">
+            <div className="flex-1 overflow-y-auto no-scrollbar [&_[data-slot=table-container]]:overflow-visible">
               <Table>
-                <TableHeader>
+                <TableHeader className="sticky top-0 z-10 bg-card shadow-sm">
                   <TableRow className="bg-muted/50 border-b-border-dashed">
                     <TableHead className="px-8 py-5">Cliente</TableHead>
                     <TableHead className="px-8 py-5">Fotógrafo</TableHead>
@@ -306,7 +306,7 @@ export default function Clientes() {
           </CardContent>
         ) : (
           /* Empty State */
-          <CardContent className="flex flex-col items-center justify-center py-24 px-6 text-center">
+          <CardContent className="flex-1 flex flex-col items-center justify-center py-24 px-6 text-center">
             <div className="w-20 h-20 bg-muted rounded-full flex items-center justify-center mb-6 shadow-sm border border-border">
               <SearchX className="h-8 w-8 text-muted-foreground" />
             </div>

@@ -369,7 +369,6 @@ function MasterDashboard() {
     [summary.pdvRevenue, summary.onlineRevenue],
   );
 
-  const hasRevenue = summary.pdvRevenue > 0 || summary.onlineRevenue > 0;
   const rangeLabel = describeRange(range);
 
   return (
@@ -474,27 +473,21 @@ function MasterDashboard() {
           <CardContent className="flex-1 pb-4">
             <ChartContainer config={chartConfig} className="min-h-[250px] w-full">
               <ResponsiveContainer width="100%" height="100%">
-                {hasRevenue ? (
-                  <BarChart data={chartData} margin={{ top: 10, left: -20, right: 10, bottom: 0 }}>
-                    <XAxis
-                      dataKey="category"
-                      tickLine={false}
-                      axisLine={false}
-                      tickMargin={12}
-                      tick={{ fill: 'var(--theme-muted)' }}
-                      fontSize={12}
-                    />
-                    <ChartTooltip
-                      cursor={{ fill: 'var(--theme-bg)', opacity: 0.5 }}
-                      content={<ChartTooltipContent hideLabel />}
-                    />
-                    <Bar dataKey="vendas" radius={[6, 6, 0, 0]} />
-                  </BarChart>
-                ) : (
-                  <div className="flex h-full items-center justify-center text-muted-foreground text-sm">
-                    {isLoading ? 'Carregando dados...' : 'Sem dados para exibir'}
-                  </div>
-                )}
+                <BarChart data={chartData} margin={{ top: 10, left: -20, right: 10, bottom: 0 }}>
+                  <XAxis
+                    dataKey="category"
+                    tickLine={false}
+                    axisLine={false}
+                    tickMargin={12}
+                    tick={{ fill: 'var(--theme-muted)' }}
+                    fontSize={12}
+                  />
+                  <ChartTooltip
+                    cursor={{ fill: 'var(--theme-bg)', opacity: 0.5 }}
+                    content={<ChartTooltipContent hideLabel />}
+                  />
+                  <Bar dataKey="vendas" radius={[6, 6, 0, 0]} />
+                </BarChart>
               </ResponsiveContainer>
             </ChartContainer>
           </CardContent>
