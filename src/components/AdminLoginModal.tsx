@@ -1,7 +1,9 @@
-import React, { useState } from 'react';
-import { Lock } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Lock, Loader2, AlertCircle } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
+import { supabase } from '@/lib/supabaseClient';
+import { toast } from 'sonner';
 
 interface AdminLoginModalProps {
   isOpen: boolean;
@@ -12,15 +14,71 @@ interface AdminLoginModalProps {
 export default function AdminLoginModal({ isOpen, onClose, onLoginSuccess }: AdminLoginModalProps) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  const handleLogin = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (email === 'dono@setland.com') {
-      onLoginSuccess('dono');
-    } else if (email === 'gerente@setland.com') {
-      onLoginSuccess('gerente');
+  // Limpa os campos e mensagens sempre que o modal for reaberto
+  useEffect(() => {
+    if (isOpen) {
+      setEmail('');
+      setPassword('');
+      setErrorMsg(null);
+      setLoading(false);
     }
-    onClose();
+  }, [isOpen]);
+
+  const handleLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setErrorMsg(null);
+
+    if (!email.trim() || !password) {
+      setErrorMsg('Informe o e-mail e a senha gerencial.');
+      return;
+    }
+
+    setLoading(true);
+
+    try {
+      // 1. Autentica a nova sessão com as credenciais fornecidas
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email: email.trim(),
+        password: password
+      });
+
+      if (error) throw error;
+      if (!data.user) throw new Error('Usuário não localizado no banco de dados.');
+
+      // 2. Consulta o cargo oficial cadastrado
+      const { data: profile, error: profileErr } = await supabase
+        .from('system_users')
+        .select('name, role')
+        .eq('id', data.user.id)
+        .maybeSingle();
+
+      if (profileErr) throw profileErr;
+
+      const role = profile?.role;
+
+      // 3. Validação estrita: somente 'gerente' ou 'dono' podem elevar privilégios
+      if (role !== 'gerente' && role !== 'dono') {
+        throw new Error('Acesso recusado: esta conta não possui cargo de Gerente ou Dono.');
+      }
+
+      toast.success(`Acesso gerencial concedido: ${profile.name}`);
+      onLoginSuccess(role);
+      onClose();
+    } catch (err: any) {
+      console.error('Falha de elevação gerencial:', err);
+      let friendly = 'Falha ao autenticar acesso gerencial.';
+      if (err.message === 'Invalid login credentials') {
+        friendly = 'E-mail ou senha incorretos.';
+      } else if (err.message) {
+        friendly = err.message;
+      }
+      setErrorMsg(friendly);
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -60,6 +118,13 @@ export default function AdminLoginModal({ isOpen, onClose, onLoginSuccess }: Adm
             />
           </div>
 
+          {errorMsg && (
+            <div className="bg-red-500/10 border border-red-500/20 text-red-500 rounded-xl p-3 flex items-start gap-3 text-sm">
+              <AlertCircle className="w-5 h-5 shrink-0 mt-0.5" />
+              <p>{errorMsg}</p>
+            </div>
+          )}
+
           <div className="pt-5 flex gap-3">
             <button 
               type="button"
@@ -70,9 +135,17 @@ export default function AdminLoginModal({ isOpen, onClose, onLoginSuccess }: Adm
             </button>
             <button 
               type="submit"
-              className="flex-1 py-3 px-4 bg-brand-accent text-brand-accent-fg rounded-xl font-semibold hover:opacity-90 transition-opacity text-sm shadow-sm"
+              disabled={loading}
+              className="flex-1 py-3 px-4 bg-brand-accent text-brand-accent-fg rounded-xl font-semibold hover:opacity-90 transition-opacity text-sm shadow-sm disabled:opacity-70 flex items-center justify-center gap-2"
             >
-              Entrar
+              {loading ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  Validando...
+                </>
+              ) : (
+                'Desbloquear'
+              )}
             </button>
           </div>
         </form>

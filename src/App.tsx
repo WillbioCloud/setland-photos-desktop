@@ -10,6 +10,8 @@ import AdminLoginModal from './components/AdminLoginModal';
 import Equipe from './components/Equipe';
 import Settings from './components/Settings';
 import { Toaster } from "@/components/ui/sonner"
+import LoginScreen from './components/LoginScreen';
+import { supabase } from '@/lib/supabaseClient';
 
 export type UserRole = 'operador' | 'gerente' | 'dono';
 
@@ -20,6 +22,60 @@ function App() {
   
   // Controle de acesso global
   const [userRole, setUserRole] = useState<UserRole>('operador');
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [isAuthChecking, setIsAuthChecking] = useState(true);
+
+  // Carrega a sessão salva no disco e detecta a role do usuário
+  useEffect(() => {
+    const checkInitialSession = async () => {
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        
+        if (session?.user) {
+          const { data: profile } = await supabase
+            .from('system_users')
+            .select('role')
+            .eq('id', session.user.id)
+            .maybeSingle();
+
+          const role = (profile?.role || session.user.user_metadata?.role || 'operador') as UserRole;
+          setUserRole(role);
+          setIsAuthenticated(true);
+        } else {
+          setIsAuthenticated(false);
+        }
+      } catch (err) {
+        console.error('Erro ao verificar sessão salva:', err);
+        setIsAuthenticated(false);
+      } finally {
+        setIsAuthChecking(false);
+      }
+    };
+
+    checkInitialSession();
+
+    // Escuta mudanças de auth (logout, expiração ou troca de conta)
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (!session) {
+        setIsAuthenticated(false);
+      }
+    });
+
+    return () => {
+      subscription.unsubscribe();
+    };
+  }, []);
+
+  const handleLoginSuccess = (role: UserRole) => {
+    setUserRole(role);
+    setIsAuthenticated(true);
+  };
+
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
+    setIsAuthenticated(false);
+    setUserRole('operador');
+  };
 
   useEffect(() => {
     const handleCartNavigation = () => setActiveTab('pdv');
@@ -75,6 +131,18 @@ function App() {
     }
   };
 
+  if (isAuthChecking) {
+    return (
+      <div className="min-h-screen bg-brand-bg flex items-center justify-center">
+        <div className="text-brand-accent animate-pulse font-mono text-sm">Carregando Terminal...</div>
+      </div>
+    );
+  }
+
+  if (!isAuthenticated) {
+    return <LoginScreen onLoginSuccess={handleLoginSuccess} />;
+  }
+
   return (
     <div className="min-h-screen bg-brand-bg text-brand-ink font-sans selection:bg-brand-accent/30 flex flex-col">
       <Header 
@@ -83,7 +151,7 @@ function App() {
         userRole={userRole}
         onAdminClick={() => setIsAdminModalOpen(true)}
         onNewClientClick={() => setIsModalOpen(true)}
-        onLogout={() => setUserRole('operador')}
+        onLogout={handleLogout}
       />
       
       <main className="flex-1 overflow-hidden p-4 md:p-6 flex flex-col">
