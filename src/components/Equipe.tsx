@@ -1,8 +1,10 @@
 import React, { useState } from 'react';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table';
-import { UserPlus, Pencil, Ban, CheckCircle2 } from 'lucide-react';
+import { UserPlus, Pencil, Ban, CheckCircle2, Package } from 'lucide-react';
 import EmployeeModal from './EmployeeModal';
+import EditEmployeeModal from './EditEmployeeModal';
+import EquipmentModal from './EquipmentModal';
 import { supabase } from '@/lib/supabaseClient';
 
 export type UserRole = 'operador' | 'gerente' | 'dono';
@@ -13,6 +15,8 @@ interface EquipeProps {
 
 export default function Equipe({ userRole }: EquipeProps) {
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isEquipmentModalOpen, setIsEquipmentModalOpen] = useState(false);
+  const [editingEmployee, setEditingEmployee] = useState<any | null>(null);
   const [employeesList, setEmployeesList] = useState<any[]>([]);
 
   const loadEmployees = async () => {
@@ -23,6 +27,8 @@ export default function Equipe({ userRole }: EquipeProps) {
         name: item.name,
         role: item.role,
         status: item.status,
+        pin: item.pin,
+        email: item.email,
         date: new Date(item.created_at).toLocaleDateString('pt-BR'),
         avatar: item.avatar_url || `https://ui-avatars.com/api/?name=${encodeURIComponent(item.name)}&background=D9A45C&color=fff`
       }));
@@ -58,15 +64,26 @@ export default function Equipe({ userRole }: EquipeProps) {
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <div>
           <h2 className="text-2xl font-semibold text-foreground">Gestão de Equipe</h2>
-          <p className="text-muted-foreground text-sm mt-1">Gerencie fotógrafos, operadores e acessos ao sistema.</p>
+          <p className="text-muted-foreground text-sm mt-1">Gerencie fotógrafos, operadores e inventário de equipamentos.</p>
         </div>
-        <button 
-          onClick={() => setIsModalOpen(true)}
-          className="bg-brand-accent hover:brightness-110 text-brand-accent-fg px-5 py-2.5 rounded-full font-semibold transition-all shadow-sm flex items-center gap-2 text-sm"
-        >
-          <UserPlus className="h-4 w-4" />
-          Novo Funcionário
-        </button>
+        <div className="flex items-center gap-2.5">
+          <button
+            type="button"
+            onClick={() => setIsEquipmentModalOpen(true)}
+            className="bg-card hover:bg-muted border border-border text-foreground px-4 py-2.5 rounded-full font-semibold transition-all shadow-sm flex items-center gap-2 text-sm cursor-pointer active:scale-95"
+          >
+            <Package className="h-4 w-4 text-primary" />
+            Equipamentos
+          </button>
+          <button
+            type="button"
+            onClick={() => setIsModalOpen(true)}
+            className="bg-brand-accent hover:brightness-110 text-brand-accent-fg px-5 py-2.5 rounded-full font-semibold transition-all shadow-sm flex items-center gap-2 text-sm cursor-pointer active:scale-95"
+          >
+            <UserPlus className="h-4 w-4" />
+            Novo Funcionário
+          </button>
+        </div>
       </div>
 
       {/* LISTA DE FUNCIONÁRIOS */}
@@ -113,7 +130,13 @@ export default function Equipe({ userRole }: EquipeProps) {
                     <TableCell className="text-muted-foreground text-sm font-mono">{emp.date}</TableCell>
                     <TableCell className="text-right">
                       <div className="flex items-center justify-end gap-2">
-                        <button className="p-2 text-muted-foreground hover:text-foreground hover:bg-secondary rounded-full transition-colors" title="Editar">
+                        <button
+                          type="button"
+                          onClick={() => setEditingEmployee(emp)}
+                          className="p-2 text-muted-foreground hover:text-foreground hover:bg-secondary rounded-full transition-colors cursor-pointer"
+                          title="Editar Perfil e Equipamentos"
+                          aria-label={`Editar perfil de ${emp.name}`}
+                        >
                           <Pencil className="h-4 w-4" />
                         </button>
                         {emp.status === 'Ativo' ? (
@@ -136,6 +159,19 @@ export default function Equipe({ userRole }: EquipeProps) {
       </Card>
 
       <EmployeeModal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} />
+
+      <EditEmployeeModal
+        isOpen={!!editingEmployee}
+        onClose={() => setEditingEmployee(null)}
+        employee={editingEmployee}
+        onEmployeeUpdated={loadEmployees}
+      />
+
+      <EquipmentModal
+        isOpen={isEquipmentModalOpen}
+        onClose={() => setIsEquipmentModalOpen(false)}
+        employees={employeesList}
+      />
     </div>
   );
 }
