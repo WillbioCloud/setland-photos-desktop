@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   AlertTriangle,
   CalendarRange,
-  Download,
   FileSpreadsheet,
   FileText,
   Loader2,
@@ -10,6 +9,7 @@ import {
   Wallet,
   X,
 } from 'lucide-react';
+import { buildAccountingExcel, buildExcelFileName, downloadExcel } from '@/lib/excelExport';
 import watermarkLogo from '../assets/watermark_setland.png';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
@@ -20,10 +20,7 @@ import { supabase } from '@/lib/supabaseClient';
 import { toast } from 'sonner';
 import {
   buildCsvContent,
-  buildCsvFileName,
   buildPhotographerPerformance,
-  CSV_SEPARATOR,
-  downloadCsv,
   filterDatasetByRange,
   formatCurrencyBRL,
   formatDateTimeBR,
@@ -195,38 +192,58 @@ export function buildAccountingCsv({
 }: BuildCsvParams): string {
   const rows: (string | number)[][] = [];
 
+  const pushRow = (row: (string | number)[]) => {
+    // Preenche com colunas vazias até 9 colunas para garantir um grid perfeito no Excel
+    const padded = [...row];
+    while (padded.length < 9) {
+      padded.push('');
+    }
+    rows.push(padded);
+  };
+
+  const addDivider = () => pushRow(['--------------------------------------------------------------------------------']);
+  const addDoubleDivider = () => pushRow(['================================================================================']);
+
   // Cabeçalho de identificação do fechamento.
-  rows.push(['FECHAMENTO CONTÁBIL - SETLAND FOTOGRAFIA']);
-  rows.push(['Período', summary.rangeLabel]);
-  rows.push(['Gerado em', formatDateTimeBR(generatedAt)]);
-  rows.push(['Sistema', 'Setland Photos Desktop - Terminal 01']);
-  rows.push(['Moeda', 'BRL (R$)']);
-  rows.push(['Codificação', 'UTF-8 com BOM']);
-  rows.push(['Separador de campos', 'ponto e vírgula']);
-  rows.push([]);
+  addDoubleDivider();
+  pushRow(['RELATÓRIO EXECUTIVO E FECHAMENTO CONTÁBIL']);
+  addDoubleDivider();
+  pushRow(['Empresa', 'Setland Fotografia']);
+  pushRow(['Sistema', 'Setland Photos Desktop - Terminal 01']);
+  pushRow(['Período de Referência', summary.rangeLabel]);
+  pushRow(['Data de Geração', formatDateTimeBR(generatedAt)]);
+  pushRow(['Moeda', 'BRL (R$)']);
+  pushRow(['Formato', 'Valores numéricos formatados em PT-BR (vírgula decimal)']);
+  pushRow([]);
 
   // Resumo para conferência do contador.
-  rows.push(['RESUMO DO PERÍODO']);
-  rows.push(['Indicador', 'Valor']);
-  rows.push(['Faturamento total (R$)', formatNumberBR(summary.totalRevenue)]);
-  rows.push(['Faturamento PDV (R$)', formatNumberBR(summary.pdvRevenue)]);
-  rows.push(['Faturamento Site (R$)', formatNumberBR(summary.onlineRevenue)]);
-  rows.push(['Transações concluídas', summary.salesCount]);
-  rows.push(['Transações PDV', summary.pdvSalesCount]);
-  rows.push(['Transações Site', summary.onlineSalesCount]);
-  rows.push(['Ticket médio (R$)', formatNumberBR(summary.ticketAverage)]);
-  rows.push(['Sessões realizadas', summary.totalSessions]);
-  rows.push(['Sessões convertidas', summary.convertedSessions]);
-  rows.push(['Sessões aguardando decisão', summary.pendingSessions]);
-  rows.push(['Taxa de conversão (%)', formatNumberBR(summary.conversionRate, 1)]);
-  rows.push([]);
+  addDivider();
+  pushRow(['RESUMO GERAL DO PERÍODO']);
+  addDivider();
+  pushRow(['Indicador', 'Valor']);
+  pushRow(['Faturamento Total (R$)', formatNumberBR(summary.totalRevenue)]);
+  pushRow(['Faturamento PDV (R$)', formatNumberBR(summary.pdvRevenue)]);
+  pushRow(['Faturamento Site (R$)', formatNumberBR(summary.onlineRevenue)]);
+  pushRow([]);
+  pushRow(['Transações Concluídas', summary.salesCount]);
+  pushRow(['Transações PDV', summary.pdvSalesCount]);
+  pushRow(['Transações Site', summary.onlineSalesCount]);
+  pushRow(['Ticket Médio (R$)', formatNumberBR(summary.ticketAverage)]);
+  pushRow([]);
+  pushRow(['Sessões Realizadas', summary.totalSessions]);
+  pushRow(['Sessões Convertidas', summary.convertedSessions]);
+  pushRow(['Sessões Pendentes', summary.pendingSessions]);
+  pushRow(['Taxa de Conversão (%)', formatNumberBR(summary.conversionRate, 1)]);
+  pushRow([]);
 
   // Faturamento por forma de pagamento (conciliação com a maquininha/banco).
-  rows.push(['FATURAMENTO POR FORMA DE PAGAMENTO']);
-  rows.push(['Forma de pagamento', 'Transações', 'Total (R$)', 'Participação (%)']);
+  addDivider();
+  pushRow(['CONCILIAÇÃO POR FORMA DE PAGAMENTO']);
+  addDivider();
+  pushRow(['Forma de Pagamento', 'Transações', 'Total Faturado (R$)', 'Participação (%)']);
   if (summary.paymentBreakdown.length > 0) {
     for (const method of summary.paymentBreakdown) {
-      rows.push([
+      pushRow([
         method.label,
         method.count,
         formatNumberBR(method.total),
@@ -234,24 +251,26 @@ export function buildAccountingCsv({
       ]);
     }
   } else {
-    rows.push(['Nenhum lançamento no período', 0, formatNumberBR(0), formatNumberBR(0, 1)]);
+    pushRow(['Nenhum lançamento no período', 0, formatNumberBR(0), formatNumberBR(0, 1)]);
   }
-  rows.push([]);
+  pushRow([]);
 
   // Performance da equipe (rateio de comissionamento).
-  rows.push(['DESEMPENHO DA EQUIPE']);
-  rows.push([
+  addDivider();
+  pushRow(['DESEMPENHO DA EQUIPE (FOTÓGRAFOS)']);
+  addDivider();
+  pushRow([
     'Fotógrafo',
     'Sessões',
     'Convertidas',
-    'Taxa de conversão (%)',
-    'Faturamento (R$)',
-    'Fotos impressas',
-    'Fotos digitais',
+    'Taxa de Conversão (%)',
+    'Faturamento Gerado (R$)',
+    'Fotos Impressas',
+    'Fotos Digitais',
   ]);
   if (photographers.length > 0) {
     for (const photographer of photographers) {
-      rows.push([
+      pushRow([
         photographer.name,
         photographer.sessions,
         photographer.converted,
@@ -262,25 +281,27 @@ export function buildAccountingCsv({
       ]);
     }
   } else {
-    rows.push(['Nenhum fotógrafo com sessões no período', 0, 0, formatNumberBR(0, 1), formatNumberBR(0), 0, 0]);
+    pushRow(['Nenhuma atividade no período', 0, 0, formatNumberBR(0, 1), formatNumberBR(0), 0, 0]);
   }
-  rows.push([]);
+  pushRow([]);
 
   // Lançamentos analíticos: uma linha por pedido pago.
-  rows.push(['LANÇAMENTOS']);
-  rows.push([
+  addDoubleDivider();
+  pushRow(['LIVRO-CAIXA / LANÇAMENTOS DETALHADOS']);
+  addDoubleDivider();
+  pushRow([
     'Data/Hora',
     'Origem',
-    'Pedido',
+    'ID Pedido',
     'Cliente',
     'CPF',
     'Telefone',
-    'Descrição',
-    'Forma de pagamento',
-    'Valor (R$)',
+    'Pacote / Descrição',
+    'Forma de Pagamento',
+    'Valor Recebido (R$)',
   ]);
   for (const entry of entries) {
-    rows.push([
+    pushRow([
       formatDateTimeBR(entry.createdAt),
       entry.source,
       entry.orderId,
@@ -292,10 +313,22 @@ export function buildAccountingCsv({
       formatNumberBR(entry.total),
     ]);
   }
-  rows.push(['TOTAL', '', '', '', '', '', '', `${entries.length} lançamento(s)`, formatNumberBR(summary.totalRevenue)]);
-  rows.push([]);
-  rows.push(['Relatório gerado automaticamente pelo Setland Photos Desktop.']);
-  rows.push(['Período de referência', summary.rangeLabel, 'Intervalo', range.start ? 'definido' : 'aberto']);
+  addDivider();
+  pushRow([
+    'TOTAL GERAL NO PERÍODO',
+    '',
+    '',
+    '',
+    '',
+    '',
+    `${entries.length} lançamento(s)`,
+    '->',
+    formatNumberBR(summary.totalRevenue),
+  ]);
+  addDoubleDivider();
+  pushRow([]);
+  pushRow(['Relatório gerado automaticamente pelo Setland Photos Desktop.']);
+  pushRow(['Período de Referência', summary.rangeLabel, 'Intervalo', range.start ? 'Definido' : 'Aberto']);
 
   return buildCsvContent(rows);
 }
@@ -450,7 +483,7 @@ export default function AccountingReportModal({
 
   const scoped = useMemo(() => filterDatasetByRange(dataset, range), [dataset, range]);
 
-  const handleExportCsv = useCallback(() => {
+  const handleExportExcel = useCallback(async () => {
     if (entries.length === 0) {
       toast.error('Nenhum lançamento no período selecionado.', {
         description: 'Ajuste o período do fechamento antes de exportar.',
@@ -460,15 +493,15 @@ export default function AccountingReportModal({
 
     try {
       const generatedAt = new Date();
-      const content = buildAccountingCsv({ summary, photographers, entries, range, generatedAt });
-      downloadCsv(buildCsvFileName('fechamento-contabil', range, generatedAt), content);
+      const blob = await buildAccountingExcel({ summary, photographers, entries, range, generatedAt });
+      downloadExcel(buildExcelFileName('fechamento-contabil', range, generatedAt), blob);
 
       toast.success(`Fechamento exportado: ${entries.length} lançamento(s).`, {
-        description: `CSV com separador "${CSV_SEPARATOR}" e UTF-8 (BOM) pronto para o ERP.`,
+        description: 'Planilha com os relatórios pronta para uso.',
       });
     } catch (err) {
-      console.error('[Fechamento Contábil] Erro ao exportar CSV:', err);
-      toast.error('Não foi possível gerar o arquivo CSV.');
+      console.error('[Fechamento Contábil] Erro ao exportar Excel:', err);
+      toast.error('Não foi possível gerar o arquivo Excel.');
     }
   }, [entries, photographers, range, summary]);
 
@@ -702,7 +735,7 @@ export default function AccountingReportModal({
       window.setTimeout(() => URL.revokeObjectURL(url), 1000);
 
       toast.success('Relatório Executivo gerado com sucesso!', {
-        description: 'Abra o HTML no navegador para visualizar ou imprimir/salvar em PDF.',
+        description: 'Arquivo gerado e pronto para visualizar ou imprimir.',
       });
     } catch (err) {
       console.error('[Fechamento Contábil] Erro ao gerar relatório visual:', err);
@@ -774,14 +807,14 @@ export default function AccountingReportModal({
                 type="button"
                 size="sm"
                 variant="outline"
-                onClick={handleExportCsv}
+                onClick={() => void handleExportExcel()}
                 disabled={isLoading || entries.length === 0}
-                title="Exportar CSV do ERP com separador ponto e vírgula e UTF-8 com BOM"
+                title="Exportar planilha Excel (.xlsx) com identidade visual Setland"
                 className="h-8 rounded-xl border-border bg-background/60 px-3 text-foreground backdrop-blur-sm hover:bg-muted"
               >
-                <Download className="h-4 w-4" />
-                <span>Exportar CSV</span>
-                <span className="hidden text-[10px] text-muted-foreground sm:inline">(ERP)</span>
+                <FileSpreadsheet className="h-4 w-4" />
+                <span>Exportar Excel</span>
+                <span className="hidden text-[10px] text-muted-foreground sm:inline">(.xlsx)</span>
               </Button>
               <Button
                 type="button"
