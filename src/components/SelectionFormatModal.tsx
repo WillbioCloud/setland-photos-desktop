@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from "react";
 import { X, Smartphone, Printer, ShoppingCart } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { toast } from "sonner";
@@ -70,7 +70,6 @@ export default function SelectionFormatModal({
       const pricing = calculatePricing(totalPrinted, totalDigitalOnly, (pkgs || []) as PackageDef[]);
 
       // 1. Marca as fotos escolhidas e define quem vai para a impressora
-      const selectedIds = selectedPhotos.map(p => p.id);
       const printedIds = selectedPhotos
         .filter(p => (formats[p.id] || 'print_and_digital') === 'print_and_digital')
         .map(p => p.id);

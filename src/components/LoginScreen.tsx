@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Camera, ShieldCheck, KeyRound, Loader2, ArrowRight, Shield, UserCheck, AlertCircle, Eye, EyeOff } from 'lucide-react';
+import { Camera, ShieldCheck, Loader2, ArrowRight, Shield, UserCheck, AlertCircle, Eye, EyeOff } from 'lucide-react';
 import { supabase } from '../lib/supabaseClient';
 import { toast } from 'sonner';
 

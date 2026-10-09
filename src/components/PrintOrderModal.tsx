@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { X, Printer, CheckCircle2, RotateCw, CheckSquare, Square, Loader2 } from 'lucide-react';
+import { useState, useEffect } from "react";
+import { Printer, CheckCircle2, RotateCw, CheckSquare, Square, Loader2 } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
@@ -72,7 +72,16 @@ export default function PrintOrderModal({ isOpen, onClose, clientName, photos }:
             description: "Trabalho despachado para a fila de impressão do Windows."
           });
         } else {
-          toast.warning(result.message || "Aviso no spooler de impressão.", { id: toastId });
+          // Falha real no spooler: o operador precisa agir, não só "ver um aviso".
+          toast.error(result.message || "Falha no spooler de impressão.", {
+            id: toastId,
+            description: result.failedPhotos?.length
+              ? `Não imprimiram: ${result.failedPhotos.join(', ')}. Reimprima estas fotos.`
+              : "Verifique a impressora térmica e tente novamente.",
+            duration: 12000
+          });
+          // Mantém o modal aberto para o operador poder reimprimir
+          return;
         }
       } else {
         // Fallback simulado caso rode em ambiente de navegador puro

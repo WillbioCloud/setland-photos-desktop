@@ -26,5 +26,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   printPhotos: (payload: { photos: any[]; printerName?: string }) => ipcRenderer.invoke('printer:printPhotos', payload),
   appendPhotos: (payload: { sessionId: string; filePaths: string[]; clientName?: string }) => ipcRenderer.invoke('photos:appendPhotos', payload),
   deleteLocalSessionDir: (localCacheDir: string) => 
-    ipcRenderer.invoke('photos:deleteLocalSessionDir', localCacheDir)
+    ipcRenderer.invoke('photos:deleteLocalSessionDir', localCacheDir),
+  getCacheUsage: () => ipcRenderer.invoke('storage:getCacheUsage'),
+  cleanSyncedCache: () => ipcRenderer.invoke('storage:cleanSyncedCache')
 });

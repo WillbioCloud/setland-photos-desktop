@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from "react";
 import { Camera, QrCode, CreditCard, Banknote, ShoppingCart, Trash2, ArrowRight, Check } from 'lucide-react';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import PrintOrderModal from './PrintOrderModal';
@@ -6,6 +6,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { toast } from "sonner";
 import { supabase } from '@/lib/supabaseClient';
 import { calculatePricing, type PackageDef } from '@/lib/pricingEngine';
+import { sendWebhookWithRetry } from '@/lib/webhookOutbox';
 
 export default function PDV() {
   const [pendingOrders, setPendingOrders] = useState<any[]>([]);
@@ -14,6 +15,7 @@ export default function PDV() {
   const [selectedTerminal, setSelectedTerminal] = useState("Smart POS Stone");
   const [isPrintModalOpen, setIsPrintModalOpen] = useState(false);
   const [printModalData, setPrintModalData] = useState<{ clientName: string; photos: any[] }>({ clientName: '', photos: [] });
+  const [isProcessingCheckout, setIsProcessingCheckout] = useState(false);
 
   const loadData = async () => {
     // 1. Busca os pedidos pendentes
@@ -55,55 +57,77 @@ export default function PDV() {
       return;
     }
 
-    const toastId = toast.loading(`Conectando à ${selectedTerminal}...`);
-    await new Promise(resolve => setTimeout(resolve, 1000));
-    toast.loading("Aguardando pagamento do cliente...", { id: toastId });
-    await new Promise(resolve => setTimeout(resolve, 2000));
-
-    const mappedMethod = method === 'cartao' ? 'credit_card' : method;
-
-    // 1. Confirmação do pagamento
-    const { error } = await supabase.from('orders').update({
-      payment_method: mappedMethod,
-      status: 'paid'
-    }).eq('id', activeOrder.id);
-
-    if (error) {
-      toast.error("Erro ao processar venda no banco de dados.", { id: toastId });
+    // Trava de reentrância: sem isto, um duplo clique dispara dois pagamentos,
+    // duas pastas no Drive e dois webhooks do n8n para o mesmo pedido.
+    if (isProcessingCheckout) {
+      toast.info("Pagamento já em andamento para este pedido.");
       return;
     }
 
-    await supabase.from('photo_sessions').update({ status: 'Convertido/Pago' }).eq('id', activeOrder.session_id);
-    toast.success("Pagamento confirmado! O upload para o Drive iniciará em background.", { id: toastId });
+    setIsProcessingCheckout(true);
+    const orderBeingPaid = activeOrder;
 
-    // Preserva os dados do pedido em escopo imutável antes de limpar a interface
-    const currentSessionId = activeOrder.session_id;
-    const currentClientName = activeOrder.photo_sessions?.clients?.name || 'Cliente';
-    const currentClientCpf = activeOrder.photo_sessions?.clients?.cpf || '';
-    const currentClientPhone = activeOrder.photo_sessions?.clients?.phone || '';
-    const currentOrderId = activeOrder.id;
-    const currentTotal = activeOrder.total_amount;
-    const currentPricingItems = pricingDetail?.items || [];
+    const toastId = toast.loading(`Conectando à ${selectedTerminal}...`);
 
-    // 1.1 Se o pedido tiver fotos impressas, abre o modal de impressão imediatamente
-    if (activeOrder.printed_count > 0) {
-      const { data: photosToPrint } = await supabase.from('session_photos')
-        .select('id, original_name, local_original_path, preview_url')
-        .eq('session_id', currentSessionId)
-        .eq('status', 'selected')
-        .eq('is_printed', true);
+    try {
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      toast.loading("Aguardando pagamento do cliente...", { id: toastId });
+      await new Promise(resolve => setTimeout(resolve, 2000));
 
-      if (photosToPrint && photosToPrint.length > 0) {
-        setPrintModalData({
-          clientName: currentClientName,
-          photos: photosToPrint
-        });
-        setIsPrintModalOpen(true);
+      const mappedMethod = method === 'cartao' ? 'credit_card' : method;
+
+      // 1. Confirmação do pagamento — guarda transacional no banco.
+      //    O .eq('status','pending') torna a operação idempotente: se outro
+      //    clique/terminal já pagou este pedido, zero linhas são atualizadas e
+      //    este fluxo aborta sem cobrar duas vezes nem duplicar a entrega.
+      const { data: updatedRows, error } = await supabase.from('orders').update({
+        payment_method: mappedMethod,
+        status: 'paid'
+      }).eq('id', orderBeingPaid.id).eq('status', 'pending').select('id');
+
+      if (error) {
+        toast.error("Erro ao processar venda no banco de dados.", { id: toastId });
+        return;
       }
-    }
 
-    setActiveOrder(null);
-    loadData();
+      if (!updatedRows || updatedRows.length === 0) {
+        toast.warning("Este pedido já foi finalizado por outra operação.", { id: toastId });
+        setActiveOrder(null);
+        loadData();
+        return;
+      }
+
+      await supabase.from('photo_sessions').update({ status: 'Convertido/Pago' }).eq('id', orderBeingPaid.session_id);
+      toast.success("Pagamento confirmado! O upload para o Drive iniciará em background.", { id: toastId });
+
+      // Preserva os dados do pedido em escopo imutável antes de limpar a interface
+      const currentSessionId = orderBeingPaid.session_id;
+      const currentClientName = orderBeingPaid.photo_sessions?.clients?.name || 'Cliente';
+      const currentClientCpf = orderBeingPaid.photo_sessions?.clients?.cpf || '';
+      const currentClientPhone = orderBeingPaid.photo_sessions?.clients?.phone || '';
+      const currentOrderId = orderBeingPaid.id;
+      const currentTotal = orderBeingPaid.total_amount;
+      const currentPricingItems = pricingDetail?.items || [];
+
+      // 1.1 Se o pedido tiver fotos impressas, abre o modal de impressão imediatamente
+      if (orderBeingPaid.printed_count > 0) {
+        const { data: photosToPrint } = await supabase.from('session_photos')
+          .select('id, original_name, local_original_path, preview_url')
+          .eq('session_id', currentSessionId)
+          .eq('status', 'selected')
+          .eq('is_printed', true);
+
+        if (photosToPrint && photosToPrint.length > 0) {
+          setPrintModalData({
+            clientName: currentClientName,
+            photos: photosToPrint
+          });
+          setIsPrintModalOpen(true);
+        }
+      }
+
+      setActiveOrder(null);
+      loadData();
 
     // 2. Rotina de Upload para o Google Drive em background com Realtime Feedback
     const runBackgroundUpload = async () => {
@@ -140,9 +164,10 @@ export default function PDV() {
         const cleanupListener = window.electronAPI.onDrivePhotoProgress ? window.electronAPI.onDrivePhotoProgress((data: any) => {
           if (data.sessionId === currentSessionId) {
             // Atualiza status da foto no banco sem bloquear o callback IPC
+            // O query builder do Supabase é um thenable, não uma Promise:
+            // ele não expõe .catch(), então o erro vai no 2º argumento do .then().
             supabase.from('session_photos').update({ status: 'synced', is_printed: false }).eq('id', data.photoId)
-              .then(() => { })
-              .catch((err: any) => console.warn('Erro ao atualizar status da foto:', err));
+              .then(() => { }, (err: any) => console.warn('Erro ao atualizar status da foto:', err));
 
             // Dispara evento global de atualização em tempo real para os modais
             window.dispatchEvent(new CustomEvent('drive-photo-synced', { detail: data }));
@@ -188,26 +213,34 @@ export default function PDV() {
         // Webhook Dinâmico para o n8n (WhatsApp) com Delay Estratégico
         if (settings?.whatsapp_api_url) {
           // Aguarda 5s para o Google Drive indexar a pasta antes de acionar o webhook
-          setTimeout(() => {
-            fetch(settings.whatsapp_api_url, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                orderId: currentOrderId,
-                clientName: currentClientName,
-                clientPhone: currentClientPhone,
-                clientCpf: currentClientCpf,
-                total: currentTotal,
-                driveLink: uploadRes.shareableLink,
-                items: currentPricingItems,
-                instance: settings.whatsapp_instance,
-                timestamp: new Date().toISOString()
-              })
-            })
-              .then((res) => {
-                if (!res.ok) console.error(`Erro HTTP no Webhook do n8n (Status: ${res.status}) - Verifique se a URL está correta e o workflow ativo.`);
-              })
-              .catch((err) => console.log('Erro de Rede ao disparar Webhook:', err));
+          setTimeout(async () => {
+            const delivered = await sendWebhookWithRetry(settings.whatsapp_api_url, {
+              orderId: currentOrderId,
+              clientName: currentClientName,
+              clientPhone: currentClientPhone,
+              clientCpf: currentClientCpf,
+              total: currentTotal,
+              driveLink: uploadRes.shareableLink,
+              items: currentPricingItems,
+              instance: settings.whatsapp_instance,
+              timestamp: new Date().toISOString()
+            });
+
+            // O pedido continua PAGO no banco de qualquer forma (o dinheiro já
+            // entrou), mas o operador precisa saber que o link não chegou.
+            if (!delivered) {
+              toast.error("WhatsApp NÃO enviado ao cliente", {
+                description: `${currentClientName} não recebeu o link. O pedido segue pago — envie o link manualmente ou aguarde o reenvio automático.`,
+                duration: 15000,
+                action: {
+                  label: "Copiar link",
+                  onClick: () => {
+                    navigator.clipboard?.writeText(uploadRes.shareableLink);
+                    toast.success("Link do Drive copiado para a área de transferência.");
+                  }
+                }
+              });
+            }
           }, 5000);
         }
 
@@ -224,7 +257,14 @@ export default function PDV() {
       }
     };
 
+    // fire-and-forget: o upload segue em background com toast próprio
     runBackgroundUpload();
+    } finally {
+      // Libera o PDV para o próximo cliente. O pedido já saiu da fila
+      // (status='paid') e o carrinho foi limpo, então não há mais risco
+      // de cobrança duplicada aqui.
+      setIsProcessingCheckout(false);
+    }
   };
 
   const handleDeletePending = async (orderId: string) => {
@@ -367,7 +407,7 @@ export default function PDV() {
 
             <div className="mb-3 xl:mb-4">
               <p className="text-[10px] xl:text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1.5 xl:mb-2">Terminal de Pagamento</p>
-              <Select value={selectedTerminal} onValueChange={setSelectedTerminal}>
+              <Select value={selectedTerminal} onValueChange={(value) => setSelectedTerminal(value ?? "Smart POS Stone")}>
                 <SelectTrigger className="w-full bg-background border-border h-9 xl:h-11 text-xs xl:text-sm">
                   <SelectValue placeholder="Selecione a maquininha" />
                 </SelectTrigger>
@@ -386,17 +426,17 @@ export default function PDV() {
             <div>
               <button
                 onClick={() => handleCheckout('pix')}
-                disabled={!activeOrder}
+                disabled={!activeOrder || isProcessingCheckout}
                 className="w-full mb-1.5 xl:mb-2 flex items-center justify-center gap-2 bg-primary hover:opacity-90 disabled:opacity-50 disabled:shadow-none text-primary-foreground px-4 py-2.5 xl:py-3 rounded-xl font-bold transition-lux active:scale-[0.98] text-xs xl:text-sm shadow-sm gold-glow"
               >
                 <QrCode className="h-3.5 w-3.5 xl:h-4 xl:w-4" />
-                Pagar com Pix
+                {isProcessingCheckout ? 'Processando pagamento...' : 'Pagar com Pix'}
               </button>
 
               <div className="grid grid-cols-2 gap-2">
                 <button
                   onClick={() => handleCheckout('cartao')}
-                  disabled={!activeOrder}
+                  disabled={!activeOrder || isProcessingCheckout}
                   className="flex items-center justify-center gap-1.5 xl:gap-2 bg-card dark:bg-white/[0.05] hover:bg-background dark:hover:bg-white/[0.09] disabled:opacity-50 border border-border dark:border-white/10 text-foreground px-3 xl:px-4 py-2 xl:py-2.5 rounded-xl font-medium transition-lux active:scale-[0.98] text-[10px] xl:text-xs shadow-sm"
                 >
                   <CreditCard className="h-3.5 w-3.5 xl:h-4 xl:w-4" />
@@ -404,7 +444,7 @@ export default function PDV() {
                 </button>
                 <button
                   onClick={() => handleCheckout('dinheiro')}
-                  disabled={!activeOrder}
+                  disabled={!activeOrder || isProcessingCheckout}
                   className="flex items-center justify-center gap-1.5 xl:gap-2 bg-card dark:bg-white/[0.05] hover:bg-background dark:hover:bg-white/[0.09] disabled:opacity-50 border border-border dark:border-white/10 text-foreground px-3 xl:px-4 py-2 xl:py-2.5 rounded-xl font-medium transition-lux active:scale-[0.98] text-[10px] xl:text-xs shadow-sm"
                 >
                   <Banknote className="h-3.5 w-3.5 xl:h-4 xl:w-4" />

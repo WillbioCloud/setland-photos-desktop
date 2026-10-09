@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Search, Plus, Lock, Image as ImageIcon, Camera, Smartphone, Edit2, Power, PowerOff } from 'lucide-react';
+import { Search, Plus, Lock, Image as ImageIcon, Camera, Edit2, Power, PowerOff } from 'lucide-react';
 import PackageModal from './PackageModal';
 import { supabase } from '@/lib/supabaseClient';
 

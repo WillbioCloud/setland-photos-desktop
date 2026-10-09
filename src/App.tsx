@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from "react";
 import Header from './components/Header';
 import Dashboard from './components/Dashboard';
 import GlobalUploadModal from './components/GlobalUploadModal';
@@ -12,6 +12,8 @@ import Settings from './components/Settings';
 import { Toaster } from "@/components/ui/sonner"
 import LoginScreen from './components/LoginScreen';
 import { supabase } from '@/lib/supabaseClient';
+import { processWebhookOutbox } from '@/lib/webhookOutbox';
+import { toast } from 'sonner';
 
 export type UserRole = 'operador' | 'gerente' | 'dono';
 
@@ -81,6 +83,31 @@ function App() {
     const handleCartNavigation = () => setActiveTab('pdv');
     window.addEventListener('add-to-cart', handleCartNavigation);
     return () => window.removeEventListener('add-to-cart', handleCartNavigation);
+  }, []);
+
+  // Reprocessa entregas de WhatsApp que falharam em expedientes anteriores e
+  // continua tentando a cada 2 minutos enquanto o terminal estiver aberto.
+  useEffect(() => {
+    const drain = () => { void processWebhookOutbox(); };
+
+    drain();
+    const interval = setInterval(drain, 120_000);
+
+    const handleOutboxEvent = (e: Event) => {
+      const detail = (e as CustomEvent).detail as { orderId?: string; status?: string; error?: string };
+      if (detail?.status === 'dead') {
+        toast.error('Entrega de WhatsApp perdida', {
+          description: `Pedido ${detail.orderId} esgotou as tentativas de envio (${detail.error}). Envie o link manualmente.`,
+          duration: 15000
+        });
+      }
+    };
+
+    window.addEventListener('webhook-outbox', handleOutboxEvent);
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('webhook-outbox', handleOutboxEvent);
+    };
   }, []);
 
   useEffect(() => {

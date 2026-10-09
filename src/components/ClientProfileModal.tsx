@@ -1,13 +1,10 @@
-import React, { useState } from 'react';
-import { X, Cloud, CloudUpload, Camera, CheckCircle2, User, Phone, DollarSign, Printer, Trash2, Globe, Monitor, Loader2, Plus, Store } from 'lucide-react';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { useEffect, useState } from "react";
+import { X, Cloud, CheckCircle2, User, Phone, DollarSign, Trash2, Globe, Monitor, Loader2, Plus, Store } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Card } from '@/components/ui/card';
 import { toast } from "sonner";
 import PresentationModal from './PresentationModal';
 import SelectionFormatModal from './SelectionFormatModal';
 import { supabase } from '@/lib/supabaseClient';
-import { calculatePricing, type PackageDef } from '@/lib/pricingEngine';
 
 interface ClientProfileModalProps {
   isOpen: boolean;
@@ -15,17 +12,8 @@ interface ClientProfileModalProps {
   client: any; // O objeto do cliente selecionado
 }
 
-const mockPhotos = [
-  { id: 1, url: 'https://images.unsplash.com/photo-1511895426328-dc8714191300?q=80&w=300&auto=format&fit=crop', status: 'synced' },
-  { id: 2, url: 'https://images.unsplash.com/photo-1519741497674-611481863552?q=80&w=300&auto=format&fit=crop', status: 'synced' },
-  { id: 3, url: 'https://images.unsplash.com/photo-1520854221256-17451cc331bf?q=80&w=300&auto=format&fit=crop', status: 'pending' },
-  { id: 4, url: 'https://images.unsplash.com/photo-1511285560929-80b456fea0bc?q=80&w=300&auto=format&fit=crop', status: 'pending' },
-];
-
 export default function ClientProfileModal({ isOpen, onClose, client }: ClientProfileModalProps) {
-  const [selectedPhotos, setSelectedPhotos] = useState<number[]>([]);
-  const [printer, setPrinter] = useState("");
-  const [printFormat, setPrintFormat] = useState("Apenas Imprimir (Avulsa)");
+  const [selectedPhotos, setSelectedPhotos] = useState<(number | string)[]>([]);
   const [isPresenting, setIsPresenting] = useState(false);
   const [isFormatModalOpen, setIsFormatModalOpen] = useState(false);
 
@@ -33,7 +21,7 @@ export default function ClientProfileModal({ isOpen, onClose, client }: ClientPr
   const [photosList, setPhotosList] = useState(client?.photos || []);
   const [orderInfo, setOrderInfo] = useState<{ total: number; source: string | null }>({ total: 0, source: null });
 
-  React.useEffect(() => {
+  useEffect(() => {
     if (client?.photos) setPhotosList(client.photos);
 
     async function fetchOrderDetails() {
@@ -119,22 +107,10 @@ export default function ClientProfileModal({ isOpen, onClose, client }: ClientPr
     return name.split(' ').map(n => n[0]).slice(0, 2).join('').toUpperCase();
   };
 
-  const togglePhoto = (id: number) => {
+  const togglePhoto = (id: number | string) => {
     setSelectedPhotos(prev => 
       prev.includes(id) ? prev.filter(pId => pId !== id) : [...prev, id]
     );
-  };
-
-  const handlePrint = async () => {
-    if (!printer) {
-      toast.error("Selecione uma impressora de destino primeiro!");
-      return;
-    }
-    
-    const toastId = toast.loading("Enviando para " + printer + "...");
-    await new Promise(resolve => setTimeout(resolve, 1500));
-    toast.success(selectedPhotos.length + " fotos enviadas no formato: " + printFormat, { id: toastId });
-    setSelectedPhotos([]);
   };
 
   return (

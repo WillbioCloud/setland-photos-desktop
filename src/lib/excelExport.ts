@@ -15,7 +15,6 @@ import ExcelJS from 'exceljs';
 import {
   formatCurrencyBRL,
   formatDateTimeBR,
-  formatNumberBR,
   formatPercentBR,
   type DateRange,
   type PhotographerPerformance,
@@ -271,7 +270,6 @@ export async function buildAccountingExcel({
   summary,
   photographers,
   entries,
-  range,
   generatedAt,
 }: BuildExcelParams): Promise<Blob> {
   const wb = new ExcelJS.Workbook();

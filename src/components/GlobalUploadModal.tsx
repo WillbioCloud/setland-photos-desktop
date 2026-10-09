@@ -151,15 +151,17 @@ export default function GlobalUploadModal({ isOpen, onClose, onSessionCreated }:
   };
 
   return (
-    <Dialog open={isOpen} onOpenChange={(open) => !open && handleClose()}>
-      <DialogContent 
+    <Dialog
+      open={isOpen}
+      // Base UI não tem onInteractOutside/onEscapeKeyDown no Popup: o bloqueio
+      // de fechamento durante o upload é interceptado aqui, no onOpenChange.
+      onOpenChange={(open) => {
+        if (isUploading) return;
+        if (!open) handleClose();
+      }}
+    >
+      <DialogContent
         className={`bg-brand-surface border-border sm:max-w-2xl sm:rounded-[2rem] p-8 ${isUploading ? '[&>button]:hidden' : ''}`}
-        onInteractOutside={(e) => {
-          if (isUploading) e.preventDefault();
-        }}
-        onEscapeKeyDown={(e) => {
-          if (isUploading) e.preventDefault();
-        }}
       >
         <DialogHeader className="flex flex-row items-center gap-4 mb-2">
           <div className="w-14 h-14 shrink-0 rounded-full bg-brand-accent/10 text-brand-accent flex items-center justify-center border border-brand-accent/20 shadow-sm">
@@ -219,7 +221,7 @@ export default function GlobalUploadModal({ isOpen, onClose, onSessionCreated }:
 
                 <div className="space-y-1.5">
                   <label className="text-sm font-medium text-brand-ink ml-1 block">Fotógrafo</label>
-                  <Select value={photographer} onValueChange={setPhotographer} disabled={isUploading}>
+                  <Select value={photographer} onValueChange={(value) => setPhotographer(value ?? '')} disabled={isUploading}>
                     <SelectTrigger className="h-11 rounded-xl bg-background border-border text-foreground">
                       <SelectValue placeholder="Selecione o fotógrafo" />
                     </SelectTrigger>

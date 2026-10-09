@@ -10,9 +10,22 @@ export async function processSingleImage(
   localCacheDir: string,
   sessionId: string | null
 ): Promise<{ originalName: string, previewPath: string, localOriginalPath: string, imageBuffer: Buffer }> {
-  
+
   const fileName = path.basename(inputPath);
-  const previewPath = path.join(outputDir, 'preview_' + fileName.replace(/\.[^/.]+$/, "") + '.webp');
+
+  // A pasta temp_previews é COMPARTILHADA entre todas as sessões. Sem isolar por
+  // sessão, duas fotos com o mesmo nome de câmera (DSC_0001.jpg é o caso clássico,
+  // pois as câmeras reiniciam a numeração) sobrescreviam a miniatura uma da outra:
+  // o cliente A passava a ver/receber a foto do cliente B.
+  const previewDir = sessionId
+    ? path.join(outputDir, String(sessionId))
+    : outputDir;
+
+  if (!fs.existsSync(previewDir)) {
+    fs.mkdirSync(previewDir, { recursive: true });
+  }
+
+  const previewPath = path.join(previewDir, 'preview_' + fileName.replace(/\.[^/.]+$/, "") + '.webp');
   
   const originalDestPath = path.join(localCacheDir, fileName);
   fs.copyFileSync(inputPath, originalDestPath);
