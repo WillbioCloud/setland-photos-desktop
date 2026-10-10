@@ -1,10 +1,11 @@
-import React, { useState, useRef, useEffect } from 'react';
-import { Search, Filter, MessageCircle, ShoppingCart, Cloud, CloudDrizzle, CloudOff, SearchX, Check, Database } from 'lucide-react';
+import { useState, useRef, useEffect } from 'react';
+import { Search, Filter, MessageCircle, ShoppingCart, Cloud, CloudDrizzle, CloudOff, SearchX, Check, Database, Trash2 } from 'lucide-react';
 import DriveSyncModal from './DriveSyncModal';
-import { Card, CardHeader, CardContent } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table';
 import ClientProfileModal from './ClientProfileModal';
 import { supabase } from '@/lib/supabaseClient';
+import { toast } from 'sonner';
 
 export default function Clientes() {
   const [clientsList, setClientsList] = useState<any[]>([]);
@@ -85,6 +86,7 @@ export default function Clientes() {
           date: new Date(item.created_at).toLocaleString('pt-BR'),
           status: currentStatus,
         driveStatus: item.drive_status || 'pending',
+        localCacheDir: item.local_cache_dir || null,
         avatar: item.cover_photo_url || item.employees?.avatar_url || null,
         photos: (item.session_photos || []).map((sp: any) => ({
           id: sp.id,
@@ -101,6 +103,80 @@ export default function Clientes() {
   }
   
   const filterRef = useRef<HTMLDivElement>(null);
+
+  /**
+   * Exclusão completa de uma sessão: banco + arquivos físicos do SSD.
+   *
+   * A ponte `photos:deleteLocalSessionDir` existia no main/preload mas nunca era
+   * chamada por ninguém — as fotos originais ficavam no disco para sempre, mesmo
+   * depois de o registro sumir do sistema.
+   */
+  const handleDeleteSession = async (client: any) => {
+    if (!client?.id) return;
+
+    const alreadyDelivered = ['PDV', 'Site'].includes(client.status) || client.driveStatus === 'synced';
+    const confirmed = window.confirm(
+      alreadyDelivered
+        ? `Excluir a sessão de ${client.name}?\n\nO registro será removido do banco e as fotos originais serão apagadas do SSD. As cópias no Google Drive são preservadas.`
+        : `ATENÇÃO: a sessão de ${client.name} AINDA NÃO foi entregue no Google Drive.\n\nExcluir agora apaga as fotos originais do SSD e o cliente perde o material em definitivo.\n\nDeseja continuar?`
+    );
+
+    if (!confirmed) return;
+
+    const toastId = toast.loading('Excluindo sessão...');
+
+    try {
+      // 1. Remove os dependentes primeiro (o banco não faz cascade automático)
+      const { error: photosErr } = await supabase
+        .from('session_photos')
+        .delete()
+        .eq('session_id', client.id);
+      if (photosErr) throw photosErr;
+
+      const { error: ordersErr } = await supabase
+        .from('orders')
+        .delete()
+        .eq('session_id', client.id);
+      if (ordersErr) throw ordersErr;
+
+      // 2. Remove a sessão
+      const { error: sessionErr } = await supabase
+        .from('photo_sessions')
+        .delete()
+        .eq('id', client.id);
+      if (sessionErr) throw sessionErr;
+
+      // 3. Apaga os arquivos físicos do SSD via ponte IPC
+      let diskResult: { success?: boolean; message?: string } = { success: true };
+      if (client.localCacheDir) {
+        // @ts-ignore - ponte exposta pelo preload do Electron
+        if (window.electronAPI?.deleteLocalSessionDir) {
+          // @ts-ignore
+          diskResult = await window.electronAPI.deleteLocalSessionDir(client.localCacheDir);
+        } else {
+          console.warn('[Clientes] Ponte deleteLocalSessionDir indisponível (ambiente web).');
+        }
+      }
+
+      setClientsList(prev => prev.filter(c => c.id !== client.id));
+      if (selectedClient?.id === client.id) setSelectedClient(null);
+      if (syncModalClient?.id === client.id) setSyncModalClient(null);
+      window.dispatchEvent(new CustomEvent('session-updated'));
+
+      if (client.localCacheDir && !diskResult?.success) {
+        toast.warning('Registro excluído, mas as fotos continuam no SSD.', {
+          id: toastId,
+          description: diskResult?.message || 'Não foi possível remover a pasta local.',
+          duration: 8000
+        });
+      } else {
+        toast.success('Sessão excluída do banco e do SSD.', { id: toastId });
+      }
+    } catch (err: any) {
+      console.error('[Clientes] Erro ao excluir sessão:', err);
+      toast.error('Não foi possível excluir a sessão: ' + (err.message || 'erro inesperado'), { id: toastId });
+    }
+  };
 
   const filters = ['Todos', 'Pendentes', 'Convertidos', 'Abandonados'];
 
@@ -280,12 +356,20 @@ export default function Clientes() {
                             <MessageCircle className="h-4 w-4" />
                           </button>
                           {/* Botão de PDV */}
-                          <button 
+                          <button
                             onClick={(e) => { e.stopPropagation(); }}
-                            className="p-2.5 rounded-full text-foreground hover:bg-muted transition-colors bg-card shadow-sm border border-border ml-2"
+                            className="p-2.5 rounded-full text-foreground hover:bg-muted transition-colors bg-card shadow-sm border border-border"
                             title="Vender (PDV)"
                           >
                             <ShoppingCart className="h-4 w-4" />
+                          </button>
+                          {/* Botão de exclusão (banco + SSD) */}
+                          <button
+                            onClick={(e) => { e.stopPropagation(); handleDeleteSession(client); }}
+                            className="p-2.5 rounded-full text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors bg-card shadow-sm border border-border"
+                            title="Excluir sessão (banco e fotos do SSD)"
+                          >
+                            <Trash2 className="h-4 w-4" />
                           </button>
                         </div>
                       </TableCell>

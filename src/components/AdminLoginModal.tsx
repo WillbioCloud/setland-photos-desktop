@@ -64,7 +64,7 @@ export default function AdminLoginModal({ isOpen, onClose, onLoginSuccess }: Adm
         throw new Error('Acesso recusado: esta conta não possui cargo de Gerente ou Dono.');
       }
 
-      toast.success(`Acesso gerencial concedido: ${profile.name}`);
+      toast.success(`Acesso gerencial concedido: ${profile?.name ?? 'usuário'}`);
       onLoginSuccess(role);
       onClose();
     } catch (err: any) {

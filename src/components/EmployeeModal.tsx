@@ -71,7 +71,7 @@ export default function EmployeeModal({ isOpen, onClose }: EmployeeModalProps) {
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-1.5">
               <label className="text-sm font-medium text-brand-ink ml-1 block">Cargo</label>
-              <Select value={role} onValueChange={setRole}>
+              <Select value={role} onValueChange={(value) => setRole(value ?? 'Operador')}>
                 <SelectTrigger className="w-full h-11 bg-background border border-border rounded-xl text-foreground focus:ring-brand-accent">
                   <SelectValue placeholder="Selecione o cargo" />
                 </SelectTrigger>

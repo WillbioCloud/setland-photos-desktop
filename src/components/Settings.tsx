@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from "react";
 import { Card, CardHeader, CardTitle, CardContent, CardDescription } from '@/components/ui/card';
-import { Save, HardDrive, Receipt, Image as ImageIcon, Ban, MessageCircle } from 'lucide-react';
+import { Save, HardDrive, Receipt, Image as ImageIcon, Ban, MessageCircle, Trash2, RefreshCw } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { toast } from "sonner";
 import { supabase } from '@/lib/supabaseClient';
@@ -11,12 +11,85 @@ interface SettingsProps {
   userRole: UserRole;
 }
 
+function formatBytes(bytes: number): string {
+  if (!bytes || bytes <= 0) return '0 MB';
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+  return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GB`;
+}
+
 export default function Settings({ userRole }: SettingsProps) {
   const [driveId, setDriveId] = useState('');
   const [receiptFooter, setReceiptFooter] = useState('');
   const [waApiUrl, setWaApiUrl] = useState('');
   const [waInstance, setWaInstance] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+
+  // Gestão de espaço em disco do SSD
+  const [cacheUsage, setCacheUsage] = useState<any>(null);
+  const [isScanningDisk, setIsScanningDisk] = useState(false);
+  const [isCleaningDisk, setIsCleaningDisk] = useState(false);
+
+  const refreshCacheUsage = async () => {
+    // @ts-ignore - ponte exposta pelo preload do Electron
+    if (!window.electronAPI?.getCacheUsage) return;
+
+    setIsScanningDisk(true);
+    try {
+      // @ts-ignore
+      const result = await window.electronAPI.getCacheUsage();
+      if (result?.success) setCacheUsage(result);
+    } catch (err) {
+      console.error('Erro ao medir o cache local:', err);
+    } finally {
+      setIsScanningDisk(false);
+    }
+  };
+
+  useEffect(() => {
+    if (userRole === 'dono') {
+      void refreshCacheUsage();
+    }
+  }, [userRole]);
+
+  const handleCleanSynced = async () => {
+    if (!cacheUsage?.syncedSessionCount) {
+      toast.info("Não há sessões já entregues no Drive para liberar.");
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `Liberar ${formatBytes(cacheUsage.syncedBytes)} do SSD?\n\n` +
+      `Serão apagadas ${cacheUsage.syncedSessionCount} pasta(s) de sessões JÁ ENTREGUES no Google Drive.\n` +
+      `Sessões pendentes ou com falha de upload são preservadas automaticamente.`
+    );
+    if (!confirmed) return;
+
+    setIsCleaningDisk(true);
+    const toastId = toast.loading('Liberando espaço no SSD...');
+
+    try {
+      // @ts-ignore
+      const result = await window.electronAPI.cleanSyncedCache();
+
+      if (!result?.success) {
+        throw new Error(result?.error || 'Falha desconhecida na limpeza.');
+      }
+
+      toast.success(`${formatBytes(result.freedBytes)} liberados do SSD.`, {
+        id: toastId,
+        description: `${result.removedCount} pasta(s) removida(s). ${result.preservedCount} sessão(ões) pendente(s) preservada(s).`,
+        duration: 6000
+      });
+
+      await refreshCacheUsage();
+    } catch (err: any) {
+      console.error(err);
+      toast.error('Erro ao limpar o disco: ' + (err.message || 'erro inesperado'), { id: toastId });
+    } finally {
+      setIsCleaningDisk(false);
+    }
+  };
 
   useEffect(() => {
     async function loadSettings() {
@@ -175,7 +248,64 @@ export default function Settings({ userRole }: SettingsProps) {
           </CardContent>
         </Card>
 
-        {/* PAINEL 4: MARCA D'ÁGUA */}
+        {/* PAINEL 4: SAÚDE DO SSD (CACHE LOCAL) */}
+        <Card className="shadow-sm md:col-span-2 lg:col-span-1">
+          <CardHeader>
+            <div className="flex items-center gap-2 mb-1">
+              <HardDrive className="h-5 w-5 text-muted-foreground" />
+              <CardTitle className="text-lg">Armazenamento Local (SSD)</CardTitle>
+            </div>
+            <CardDescription>Fotos originais guardadas neste terminal antes da entrega no Drive.</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="grid grid-cols-2 gap-3">
+              <div className="p-3 rounded-xl bg-secondary/40 border border-border">
+                <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">Ocupado</p>
+                <p className="text-lg font-bold font-mono tabular-figures text-foreground">
+                  {cacheUsage ? formatBytes(cacheUsage.totalBytes) : '—'}
+                </p>
+                <p className="text-[10px] text-muted-foreground mt-0.5">
+                  {cacheUsage?.sessionCount ?? 0} sessões
+                </p>
+              </div>
+              <div className="p-3 rounded-xl bg-emerald-500/5 border border-emerald-500/20">
+                <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">Liberável</p>
+                <p className="text-lg font-bold font-mono tabular-figures text-emerald-600 dark:text-emerald-400">
+                  {cacheUsage ? formatBytes(cacheUsage.syncedBytes) : '—'}
+                </p>
+                <p className="text-[10px] text-muted-foreground mt-0.5">
+                  {cacheUsage?.syncedSessionCount ?? 0} já no Drive
+                </p>
+              </div>
+            </div>
+
+            <div className="flex gap-2">
+              <button
+                onClick={() => void refreshCacheUsage()}
+                disabled={isScanningDisk}
+                className="flex-1 px-3 py-2.5 rounded-xl border border-border bg-card hover:bg-muted text-foreground text-xs font-semibold flex items-center justify-center gap-2 transition-colors disabled:opacity-50"
+              >
+                <RefreshCw className={`h-3.5 w-3.5 ${isScanningDisk ? 'animate-spin' : ''}`} />
+                Medir
+              </button>
+              <button
+                onClick={() => void handleCleanSynced()}
+                disabled={isCleaningDisk || !cacheUsage?.syncedSessionCount}
+                className="flex-1 px-3 py-2.5 rounded-xl bg-destructive/10 hover:bg-destructive/20 text-destructive text-xs font-semibold flex items-center justify-center gap-2 transition-colors disabled:opacity-40 disabled:cursor-not-allowed border border-destructive/25"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+                {isCleaningDisk ? 'Liberando...' : 'Liberar espaço'}
+              </button>
+            </div>
+
+            <p className="text-[10px] text-muted-foreground leading-relaxed">
+              Uma limpeza automática remove pastas com mais de 30 dias a cada 6 horas.
+              Sessões ainda não entregues nunca são apagadas por aqui.
+            </p>
+          </CardContent>
+        </Card>
+
+        {/* PAINEL 5: MARCA D'ÁGUA */}
         <Card className="shadow-sm md:col-span-2">
           <CardHeader>
             <div className="flex items-center gap-2 mb-1">

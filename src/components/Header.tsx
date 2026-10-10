@@ -1,4 +1,3 @@
-import React from 'react';
 import { UserPlus, LayoutDashboard, Users, Package, ShoppingCart, History, Lock, LogOut, Briefcase, Settings, Sun, Moon, Monitor } from 'lucide-react';
 import watermarkLogo from '../assets/watermark_setland.png';
 import { useTheme, type ThemeMode } from '@/hooks/useTheme';

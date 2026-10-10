@@ -2,10 +2,13 @@
   "name": "setland-photos-desktop",
   "private": true,
   "version": "0.0.0",
+  "description": "Terminal de captura, venda e entrega digital de fotos - Setland Park",
+  "author": "Setland",
   "type": "module",
   "main": "dist-electron/main.js",
   "scripts": {
     "dev": "vite",
+    "typecheck": "tsc --noEmit -p tsconfig.app.json && tsc --noEmit -p tsconfig.electron.json",
     "build": "tsc && vite build && electron-builder",
     "preview": "vite preview"
   },
@@ -55,5 +58,33 @@
     "vite": "^8.3.0",
     "vite-plugin-electron": "^1.1.2",
     "vite-plugin-electron-renderer": "^1.0.0"
+  },
+  "build": {
+    "appId": "com.setland.photos",
+    "productName": "Setland Fotos",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "dist-electron/**/*"
+    ],
+    "asarUnpack": [
+      "**/node_modules/sharp/**",
+      "**/node_modules/@img/**"
+    ],
+    "extraResources": [
+      {
+        "from": "electron/credentials.json",
+        "to": "credentials.json"
+      }
+    ],
+    "win": {
+      "target": "nsis"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    }
   }
 }

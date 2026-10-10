@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef } from "react";
 import { CheckCircle2 } from 'lucide-react';
 import { toast } from "sonner";
 import watermarkLogo from '../assets/watermark_setland.png';
@@ -25,7 +25,9 @@ export default function PresentationModal({
   const [watermarkPos, setWatermarkPos] = useState<'br' | 'bl' | 'tr' | 'tl' | 'center'>('br');
   const [showUI, setShowUI] = useState(true);
 
-  const timeoutRef = useRef<NodeJS.Timeout | null>(null);
+  // ReturnType<typeof setTimeout> funciona no browser e no Node sem depender
+// do namespace NodeJS (que exige @types/node no escopo do renderer).
+  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const handleMouseMove = useCallback(() => {
     setShowUI(true);

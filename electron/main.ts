@@ -1,4 +1,5 @@
 import { app, BrowserWindow, ipcMain, dialog } from 'electron';
+import type { PrinterInfo } from 'electron';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
@@ -48,6 +49,37 @@ function createWindow() {
 app.commandLine.appendSwitch('disable-gpu-shader-disk-cache');
 app.commandLine.appendSwitch('disable-features', 'DirectCompositionVideoOverlays');
 
+function getCacheBasePath(): string {
+  return path.join(app.getPath('userData'), 'Setland_Cache');
+}
+
+/** Soma recursivamente o tamanho em bytes de um diretório. */
+function getDirectorySizeBytes(dirPath: string): number {
+  let total = 0;
+  let entries: fs.Dirent[];
+
+  try {
+    entries = fs.readdirSync(dirPath, { withFileTypes: true });
+  } catch {
+    return 0;
+  }
+
+  for (const entry of entries) {
+    const fullPath = path.join(dirPath, entry.name);
+    try {
+      if (entry.isDirectory()) {
+        total += getDirectorySizeBytes(fullPath);
+      } else {
+        total += fs.statSync(fullPath).size;
+      }
+    } catch {
+      // arquivo removido/sem permissão durante a varredura: ignora
+    }
+  }
+
+  return total;
+}
+
 /**
  * Robô Local: Varre a pasta de cache de fotos e deleta pastas com mais de 30 dias
  */
@@ -76,6 +108,60 @@ function cleanOldLocalPhotos(cacheBasePath: string) {
   } catch (error) {
     console.error('[Robô Local] Erro ao limpar fotos antigas do disco:', error);
   }
+}
+
+/**
+ * Varredura do cache: classifica cada pasta de sessão em "já entregue no Drive"
+ * (pode apagar) x "ainda pendente" (NUNCA apagar, senão o cliente perde as fotos
+ * compradas e nunca recebe a entrega).
+ */
+async function scanLocalCache() {
+  const cacheBasePath = getCacheBasePath();
+  const sessions: Array<{ dir: string; bytes: number; ageDays: number; driveStatus: string; sessionId: string | null }> = [];
+
+  if (!fs.existsSync(cacheBasePath)) {
+    return { sessions, totalBytes: 0, syncedBytes: 0, pendingBytes: 0 };
+  }
+
+  // Indexa as sessões do banco pelo caminho de cache registrado
+  const { data: dbSessions } = await supabase
+    .from('photo_sessions')
+    .select('id, local_cache_dir, drive_status');
+
+  const byDir = new Map<string, { id: string; drive_status: string | null }>();
+  for (const s of dbSessions ?? []) {
+    if (s.local_cache_dir) {
+      byDir.set(path.normalize(s.local_cache_dir), { id: s.id, drive_status: s.drive_status });
+    }
+  }
+
+  const now = Date.now();
+  for (const folder of fs.readdirSync(cacheBasePath)) {
+    const folderPath = path.join(cacheBasePath, folder);
+    let stat: fs.Stats;
+    try {
+      stat = fs.statSync(folderPath);
+    } catch {
+      continue;
+    }
+    if (!stat.isDirectory()) continue;
+
+    const info = byDir.get(path.normalize(folderPath));
+    const bytes = getDirectorySizeBytes(folderPath);
+
+    sessions.push({
+      dir: folderPath,
+      bytes,
+      ageDays: Math.floor((now - stat.mtimeMs) / 86_400_000),
+      driveStatus: info?.drive_status ?? 'unknown',
+      sessionId: info?.id ?? null,
+    });
+  }
+
+  const totalBytes = sessions.reduce((acc, s) => acc + s.bytes, 0);
+  const syncedBytes = sessions.filter(s => s.driveStatus === 'synced').reduce((acc, s) => acc + s.bytes, 0);
+
+  return { sessions, totalBytes, syncedBytes, pendingBytes: totalBytes - syncedBytes };
 }
 
 /**
@@ -222,8 +308,12 @@ async function startOnlineOrdersWorker() {
 
 app.whenReady().then(() => {
   // Ajuste para o caminho exato onde as fotos brutas são descarregadas no SSD
-  const localPhotosDir = path.join(app.getPath('userData'), 'Setland_Cache');
+  const localPhotosDir = getCacheBasePath();
   cleanOldLocalPhotos(localPhotosDir);
+
+  // Antes a limpeza rodava UMA vez no boot. Num terminal que fica ligado 24/7 no
+  // parque, ela nunca mais disparava e o SSD enchia. Agora roda a cada 6h.
+  setInterval(() => cleanOldLocalPhotos(getCacheBasePath()), 6 * 60 * 60 * 1000);
 
   // Inicia o motor de escuta invisível das vendas do site
   startOnlineOrdersWorker();
@@ -461,37 +551,51 @@ app.whenReady().then(() => {
   });
 
   // 2. Disparo silencioso de lote de fotos para o driver térmico
-  ipcMain.handle('printer:printPhotos', async (event, payload) => {
+  ipcMain.handle('printer:printPhotos', async (_event, payload) => {
+    const { photos, printerName } = payload;
+
     try {
-      const { photos, printerName } = payload;
       if (!photos || photos.length === 0) {
-        return { success: false, message: 'Nenhuma foto recebida para impressão.' };
+        return { success: false, count: 0, total: 0, printerUsed: null, message: 'Nenhuma foto recebida para impressão.' };
       }
 
       // Busca as impressoras instaladas no sistema operacional
       const printers = await mainWindow?.webContents.getPrintersAsync() || [];
-      
+
+      // No Electron 44 o tipo PrinterInfo NÃO tem `isDefault` (só name, displayName,
+      // description, options). A impressora padrão do Windows vem dentro de `options`.
+      const isOsDefaultPrinter = (p: PrinterInfo): boolean => {
+        const opts = (p.options || {}) as Record<string, unknown>;
+        const raw = opts.printerIsDefault ?? opts.default ?? opts['printer-is-default'];
+        // O spooler do Windows devolve 'true' (string) em alguns drivers
+        return raw === true || raw === 'true' || raw === 1 || raw === '1';
+      };
+
       // Procura por DNP/RX1, pelo nome passado ou recorre à impressora padrão do Windows
-      let targetPrinter = printerName 
+      let targetPrinter = printerName
         ? printers.find(p => p.name.toLowerCase().includes(printerName.toLowerCase()))?.name
         : printers.find(p => p.name.toLowerCase().includes('dnp') || p.name.toLowerCase().includes('rx1'))?.name;
 
       if (!targetPrinter) {
-        targetPrinter = printers.find(p => p.isDefault)?.name || printers[0]?.name;
+        targetPrinter = printers.find(isOsDefaultPrinter)?.name;
       }
 
-      // Fallback gracioso para ambiente de desenvolvimento sem impressoras conectadas
+      // Sem impressora térmica identificada: falha de forma EXPLÍCITA.
+      // Retornar success:true aqui fazia o PDV dizer "impresso" sem sair papel.
       if (!targetPrinter) {
-        console.log('Nenhuma impressora detectada no Windows. Concluindo em modo simulado.');
+        const available = printers.map(p => p.name).join(', ') || 'nenhuma';
+        console.error(`[Impressão] Nenhuma impressora térmica (DNP/RX1) nem padrão encontrada. Disponíveis: ${available}`);
         return {
-          success: true,
-          count: photos.length,
+          success: false,
+          count: 0,
           total: photos.length,
-          printerUsed: 'Modo Simulado (Sem impressora conectada)'
+          printerUsed: null,
+          message: `Nenhuma impressora térmica (DNP/RX1) encontrada no Windows. Impressoras detectadas: ${available}. Verifique o cabo USB e o driver.`
         };
       }
 
       let printedCount = 0;
+      const failedPhotos: string[] = [];
 
       for (const photo of photos) {
         let rawPath = photo.local_original_path 
@@ -506,10 +610,12 @@ app.whenReady().then(() => {
 
         if (!fs.existsSync(rawPath)) {
           console.warn(`Arquivo não encontrado no SSD para impressão: ${rawPath}`);
+          failedPhotos.push(photo.original_name);
           continue;
         }
 
         await new Promise<void>((resolve) => {
+          let settled = false;
           const printWindow = new BrowserWindow({
             show: false,
             webPreferences: {
@@ -517,16 +623,43 @@ app.whenReady().then(() => {
             }
           });
 
+          // Rede/disco travados não podem pendurar o lote inteiro no PDV.
+          const watchdog = setTimeout(() => {
+            if (settled) return;
+            settled = true;
+            console.error(`[Impressão] Timeout ao preparar ${photo.original_name}`);
+            failedPhotos.push(photo.original_name);
+            if (!printWindow.isDestroyed()) printWindow.close();
+            resolve();
+          }, 30_000);
+
+          const finish = (ok: boolean, reason?: string) => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(watchdog);
+            if (ok) {
+              printedCount++;
+            } else {
+              console.warn(`Spooler rejeitou ${photo.original_name}:`, reason);
+              failedPhotos.push(photo.original_name);
+            }
+            if (!printWindow.isDestroyed()) printWindow.close();
+            resolve();
+          };
+
           sharp(rawPath).metadata().then((meta) => {
             const isLandscape = (meta.width || 0) > (meta.height || 0);
             const fileUrl = 'file:///' + rawPath.replace(/\\/g, '/');
 
+            // @page trava o papel em 10x15cm (4x6in), que é a mídia da DNP RX1.
+            // Sem isso o Chromium usa Letter/A4 e o driver sublima a foto fora de escala.
             const htmlContent = `
               <!DOCTYPE html>
               <html>
                 <head>
                   <style>
-                    body, html { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: white; }
+                    @page { size: 100mm 150mm; margin: 0; }
+                    body, html { margin: 0; padding: 0; width: 100mm; height: 150mm; overflow: hidden; background: white; }
                     img { width: 100%; height: 100%; object-fit: contain; }
                   </style>
                 </head>
@@ -536,9 +669,7 @@ app.whenReady().then(() => {
               </html>
             `;
 
-            printWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(htmlContent)}`);
-
-            printWindow.webContents.on('did-finish-load', () => {
+            printWindow.webContents.once('did-finish-load', () => {
               printWindow.webContents.print({
                 silent: true,
                 printBackground: true,
@@ -546,33 +677,43 @@ app.whenReady().then(() => {
                 landscape: isLandscape,
                 margins: { marginType: 'none' }
               }, (success, failureReason) => {
-                printWindow.close();
-                if (success) {
-                  printedCount++;
-                } else {
-                  console.warn(`Spooler rejeitou ${photo.original_name}:`, failureReason);
-                }
-                resolve();
+                finish(success, failureReason);
               });
             });
+
+            printWindow.webContents.once('did-fail-load', (_e, code, desc) => {
+              finish(false, `Falha ao carregar a imagem (código ${code}): ${desc}`);
+            });
+
+            printWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(htmlContent)}`);
           }).catch((err) => {
-            console.error(`Erro ao ler dimensões de ${photo.original_name}:`, err);
-            printWindow.close();
-            resolve();
+            finish(false, `Erro ao ler dimensões: ${(err as Error).message}`);
           });
         });
       }
 
-      return { 
-        success: true, 
-        count: printedCount > 0 ? printedCount : photos.length, 
-        total: photos.length, 
-        printerUsed: targetPrinter 
+      const allFailed = printedCount === 0;
+
+      return {
+        // Só reporta sucesso se pelo menos uma foto realmente entrou no spooler.
+        success: !allFailed,
+        count: printedCount,
+        total: photos.length,
+        printerUsed: targetPrinter,
+        failedPhotos,
+        message: allFailed
+          ? `Nenhuma das ${photos.length} foto(s) foi aceita pelo spooler de [${targetPrinter}].`
+          : (failedPhotos.length > 0
+            ? `${printedCount} de ${photos.length} foto(s) enviada(s). Falharam: ${failedPhotos.join(', ')}.`
+            : undefined)
       };
     } catch (err: any) {
       console.error('Erro crítico no spooler de impressão:', err);
       return {
         success: false,
+        count: 0,
+        total: photos?.length ?? 0,
+        printerUsed: null,
         message: err.message || 'Falha interna ao processar lote de impressão.'
       };
     }
@@ -670,13 +811,15 @@ app.whenReady().then(() => {
   // Remove fisicamente a pasta de cache do disco quando a sessão/cliente for excluído
   ipcMain.handle('photos:deleteLocalSessionDir', async (_event, localCacheDir: string) => {
     try {
-      if (!localCacheDir) return { success: false, message: 'Caminho não informado.' };
+      if (!localCacheDir) return { success: false, message: 'Caminho não informado.' }
 
       const normalizedPath = path.normalize(localCacheDir);
 
-      // Trava de segurança: impede apagar fora de Setland_Cache
-      const expectedBase = path.normalize(path.join(app.getPath('userData'), 'Setland_Cache'));
-      if (!normalizedPath.startsWith(expectedBase)) {
+      // Trava de segurança: impede apagar fora de Setland_Cache.
+      // path.relative (e não startsWith) para não aceitar "Setland_Cache_MALICIOSO".
+      const expectedBase = path.normalize(getCacheBasePath());
+      const relative = path.relative(expectedBase, normalizedPath);
+      if (relative === '' || relative.startsWith('..') || path.isAbsolute(relative)) {
         throw new Error('Caminho fora do diretório seguro de cache.');
       }
 
@@ -689,6 +832,64 @@ app.whenReady().then(() => {
       return { success: false, message: 'Diretório não encontrado no disco.' };
     } catch (err: any) {
       console.error('[Disco Local] Erro ao remover pasta física:', err);
+      return { success: false, error: err.message };
+    }
+  });
+
+  // Painel administrativo: quanto o cache local está ocupando e quanto já está seguro no Drive
+  ipcMain.handle('storage:getCacheUsage', async () => {
+    try {
+      const { totalBytes, syncedBytes, pendingBytes, sessions } = await scanLocalCache();
+      return {
+        success: true,
+        cachePath: getCacheBasePath(),
+        totalBytes,
+        syncedBytes,
+        pendingBytes,
+        sessionCount: sessions.length,
+        syncedSessionCount: sessions.filter(s => s.driveStatus === 'synced').length
+      };
+    } catch (err: any) {
+      console.error('[Disco Local] Erro ao medir o cache:', err);
+      return { success: false, error: err.message };
+    }
+  });
+
+  /**
+   * Libera espaço no SSD apagando SOMENTE o que já foi entregue no Google Drive.
+   * Sessões 'pending'/'error' são preservadas: apagar isso seria prejuízo real
+   * (o cliente pagou e as fotos originais deixariam de existir).
+   */
+  ipcMain.handle('storage:cleanSyncedCache', async () => {
+    try {
+      const { sessions } = await scanLocalCache();
+      const candidates = sessions.filter(s => s.driveStatus === 'synced');
+
+      let removedCount = 0;
+      let freedBytes = 0;
+      const failures: string[] = [];
+
+      for (const session of candidates) {
+        try {
+          fs.rmSync(session.dir, { recursive: true, force: true });
+          removedCount++;
+          freedBytes += session.bytes;
+        } catch (err: any) {
+          console.error(`[Disco Local] Falha ao remover ${session.dir}:`, err);
+          failures.push(session.dir);
+        }
+      }
+
+      console.log(`[Disco Local] Limpeza concluída: ${removedCount} pasta(s), ${(freedBytes / 1024 / 1024).toFixed(1)} MB liberados.`);
+      return {
+        success: true,
+        removedCount,
+        freedBytes,
+        preservedCount: sessions.length - candidates.length,
+        failures
+      };
+    } catch (err: any) {
+      console.error('[Disco Local] Erro na limpeza do cache:', err);
       return { success: false, error: err.message };
     }
   });

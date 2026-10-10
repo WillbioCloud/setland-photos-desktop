@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { X, Cloud, CloudOff, CheckCircle2, AlertCircle, Image as ImageIcon, Clock, Database, RefreshCw, Loader2 } from 'lucide-react';
+import { X, Cloud, CloudOff, CheckCircle2, AlertCircle, Image as ImageIcon, Clock, Database, RefreshCw } from 'lucide-react';
 import { supabase } from '@/lib/supabaseClient';
 import { toast } from 'sonner';
 
@@ -10,6 +10,29 @@ interface DriveSyncModalProps {
 }
 
 export default function DriveSyncModal({ isOpen, onClose, client }: DriveSyncModalProps) {
+  // Hooks precisam rodar ANTES de qualquer early return. Com o return na frente,
+  // abrir/fechar este modal mudava a ordem dos hooks e o React derrubava a tela
+  // com "Rendered more hooks than during the previous render".
+  const [isRetrying, setIsRetrying] = useState(false);
+  const [realtimeSyncedIds, setRealtimeSyncedIds] = useState<(string | number)[]>([]);
+
+  const currentSessionId = client?.id;
+
+  // Escuta os uploads acontecendo em tempo real para animar este modal
+  React.useEffect(() => {
+    if (!currentSessionId) return;
+
+    const handleProgress = (e: any) => {
+      const { sessionId, photoId } = e.detail || {};
+      if (sessionId === currentSessionId) {
+        setRealtimeSyncedIds(prev => [...prev, photoId]);
+      }
+    };
+
+    window.addEventListener('drive-photo-synced', handleProgress);
+    return () => window.removeEventListener('drive-photo-synced', handleProgress);
+  }, [currentSessionId]);
+
   if (!isOpen || !client) return null;
 
   const isPaid = ['PDV', 'Site'].includes(client.status);
@@ -17,22 +40,6 @@ export default function DriveSyncModal({ isOpen, onClose, client }: DriveSyncMod
   // Separação Estrita: Apenas fotos marcadas para compra entram na Entrega Digital
   const purchasedPhotos = client.photos?.filter((p: any) => ['selected', 'synced', 'error'].includes(p.status)) || [];
   const systemPhotos = client.photos?.filter((p: any) => !['selected', 'synced', 'error'].includes(p.status) || p.status === 'pending') || [];
-
-  const [isRetrying, setIsRetrying] = useState(false);
-  const [realtimeSyncedIds, setRealtimeSyncedIds] = useState<(string | number)[]>([]);
-
-  // Escuta os uploads acontecendo em tempo real para animar este modal
-  React.useEffect(() => {
-    const handleProgress = (e: any) => {
-      const { sessionId, photoId } = e.detail || {};
-      if (sessionId === client.id) {
-        setRealtimeSyncedIds(prev => [...prev, photoId]);
-      }
-    };
-
-    window.addEventListener('drive-photo-synced', handleProgress);
-    return () => window.removeEventListener('drive-photo-synced', handleProgress);
-  }, [client.id]);
 
   const handleRetry = async () => {
     setIsRetrying(true);
