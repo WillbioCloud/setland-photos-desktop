@@ -66,6 +66,32 @@ function App() {
     };
   }, []);
 
+  // Auto-logout por inatividade (30 minutos)
+  useEffect(() => {
+    if (!isAuthenticated) return;
+
+    let timeoutId: NodeJS.Timeout;
+
+    const resetTimer = () => {
+      clearTimeout(timeoutId);
+      timeoutId = setTimeout(async () => {
+        console.log('[Segurança] Sessão expirada por inatividade (30 min).');
+        await supabase.auth.signOut();
+        setIsAuthenticated(false);
+        setUserRole('operador');
+      }, 30 * 60 * 1000); // 30 minutos
+    };
+
+    const events = ['mousedown', 'keydown', 'scroll', 'touchstart'];
+    events.forEach((evt) => window.addEventListener(evt, resetTimer));
+    resetTimer();
+
+    return () => {
+      clearTimeout(timeoutId);
+      events.forEach((evt) => window.removeEventListener(evt, resetTimer));
+    };
+  }, [isAuthenticated]);
+
   const handleLoginSuccess = (role: UserRole) => {
     setUserRole(role);
     setIsAuthenticated(true);

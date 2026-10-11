@@ -55,10 +55,7 @@ export default function PDV() {
       return;
     }
 
-    const toastId = toast.loading(`Conectando à ${selectedTerminal}...`);
-    await new Promise(resolve => setTimeout(resolve, 1000));
-    toast.loading("Aguardando pagamento do cliente...", { id: toastId });
-    await new Promise(resolve => setTimeout(resolve, 2000));
+    const toastId = toast.loading("Processando venda no balcão...");
 
     const mappedMethod = method === 'cartao' ? 'credit_card' : method;
 
@@ -378,8 +375,8 @@ export default function PDV() {
                 </SelectContent>
               </Select>
               <div className="flex items-center gap-2 mt-2 ml-1">
-                <div className="w-1.5 h-1.5 xl:w-2 xl:h-2 rounded-full bg-emerald-500 animate-pulse"></div>
-                <span className="text-[10px] xl:text-xs text-muted-foreground">Terminal Conectado</span>
+                <div className="w-1.5 h-1.5 xl:w-2 xl:h-2 rounded-full bg-emerald-500"></div>
+                <span className="text-[10px] xl:text-xs text-muted-foreground">Cobrança Externa (Maquininha Física)</span>
               </div>
             </div>
 

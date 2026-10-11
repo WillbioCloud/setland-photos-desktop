@@ -23,18 +23,25 @@ let mainWindow: BrowserWindow | null = null;
 
 function createWindow() {
   mainWindow = new BrowserWindow({
-    width: 1280,
-    height: 800,
+    width: 1366,
+    height: 860,
     minWidth: 1024,
-    minHeight: 768,
-    autoHideMenuBar: true,
-    webPreferences: {
-      // O Vite gera o preload com a extensão .mjs
-      preload: path.join(__dirname, 'preload.mjs'),
-      nodeIntegration: false,
-      contextIsolation: true,
-      webSecurity: false, // Libera carregamento de arquivos locais do SSD (file:///)
+    minHeight: 700,
+    title: "Setland Fotos - Terminal Quiosque",
+    icon: path.join(__dirname, '../public/favicon.ico'),
+    backgroundColor: '#0D020C',
+    autoHideMenuBar: true, // Remove menu padrão 'File, Edit, View'
+    titleBarStyle: 'hidden', // Oculta barra cinza padrão do Windows
+    titleBarOverlay: {
+      color: '#0D020C', // Fundo escuro harmonizado com o app
+      symbolColor: '#D9A45C', // Botões minimizar/fechar em Dourado Setland
+      height: 38
     },
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.mjs'),
+      sandbox: false,
+      webSecurity: false
+    }
   });
 
   // 2. Resolve automaticamente a porta (5173, 5174, etc)
