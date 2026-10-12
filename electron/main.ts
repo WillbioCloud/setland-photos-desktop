@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, shell } from 'electron';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
@@ -458,6 +458,27 @@ app.whenReady().then(() => {
     } catch (err) {
       console.error('Erro no upload pro drive:', err);
       throw err;
+    }
+  });
+
+  // Abre links externos (WhatsApp, Drive, portal) no navegador/app padrão do Windows,
+  // mantendo o quiosque focado sem criar janelas internas do Electron.
+  ipcMain.handle('shell:openExternal', async (_event, url: string) => {
+    try {
+      if (!url || typeof url !== 'string') {
+        throw new Error('URL inválida.');
+      }
+
+      const parsed = new URL(url);
+      if (!['https:', 'http:', 'whatsapp:'].includes(parsed.protocol)) {
+        throw new Error('Protocolo não permitido para abertura externa.');
+      }
+
+      await shell.openExternal(url);
+      return { success: true };
+    } catch (err: any) {
+      console.error('[Shell] Falha ao abrir link externo:', err);
+      return { success: false, error: err?.message || 'Erro ao abrir o link externo.' };
     }
   });
 

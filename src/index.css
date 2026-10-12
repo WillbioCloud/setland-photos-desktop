@@ -293,6 +293,17 @@ body {
   .tabular-figures {
     font-variant-numeric: tabular-nums;
   }
+
+  /* ── Janela Electron (Windows · titleBarStyle: 'hidden') ──
+     Área arrastável da janela e zonas que precisam continuar clicáveis sob o overlay nativo. */
+  .app-drag-region {
+    -webkit-app-region: drag;
+    app-region: drag;
+  }
+  .app-no-drag {
+    -webkit-app-region: no-drag;
+    app-region: no-drag;
+  }
 }
 
 @keyframes theme-icon-in {

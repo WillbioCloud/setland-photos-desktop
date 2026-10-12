@@ -18,7 +18,7 @@ function ThemeSelector() {
       onClick={cycleTheme}
       title={`Tema: ${label} (${hint}) — clique para alternar`}
       aria-label={`Alternar tema. Atual: ${label}`}
-      className="relative p-2 xl:p-2.5 rounded-full text-brand-muted hover:text-brand-accent hover:bg-brand-accent/10 transition-lux flex items-center justify-center border border-transparent hover:border-brand-accent/20 overflow-hidden"
+      className="app-no-drag relative p-2 xl:p-2.5 rounded-full text-brand-muted hover:text-brand-accent hover:bg-brand-accent/10 transition-lux flex items-center justify-center border border-transparent hover:border-brand-accent/20 overflow-hidden"
     >
       <span key={theme} className="animate-theme-icon flex items-center justify-center">
         <Icon className="h-4 w-4" />
@@ -56,9 +56,11 @@ export default function Header({ activeTab, setActiveTab, onAdminClick, onNewCli
   }
 
   return (
-    <header className="px-4 xl:px-6 py-4 xl:py-5 flex items-center justify-between gap-2 overflow-hidden sticky top-0 z-30">
+    /* pt-[38px] reserva exatamente a altura do titleBarOverlay do Windows (electron/main.ts),
+       evitando que logo, navegação e botões fiquem sob minimizar/maximizar/fechar. */
+    <header className="app-drag-region px-4 xl:px-6 pt-[38px] pb-4 xl:pb-5 flex items-center justify-between gap-2 overflow-hidden sticky top-0 z-30">
       {/* Bloco Esquerdo: Logo */}
-      <div className="bg-brand-surface dark:bg-white/[0.04] dark:backdrop-blur-xl dark:border dark:border-white/10 dark:lux-top-highlight shadow-sm dark:shadow-none lux-card px-4 xl:px-6 py-2 xl:py-2.5 rounded-full flex items-center gap-2 xl:gap-3 shrink-0 transition-lux">
+      <div className="app-no-drag bg-brand-surface dark:bg-white/[0.04] dark:backdrop-blur-xl dark:border dark:border-white/10 dark:lux-top-highlight shadow-sm dark:shadow-none lux-card px-4 xl:px-6 py-2 xl:py-2.5 rounded-full flex items-center gap-2 xl:gap-3 shrink-0 transition-lux">
         <img
           src={watermarkLogo}
           alt="Setland"
@@ -68,7 +70,7 @@ export default function Header({ activeTab, setActiveTab, onAdminClick, onNewCli
       </div>
 
       {/* Bloco Central: Navegação */}
-      <nav className="bg-brand-surface dark:bg-white/[0.04] dark:backdrop-blur-xl dark:border dark:border-white/10 shadow-sm dark:shadow-none lux-card p-1 xl:p-1.5 rounded-full flex items-center justify-center gap-0.5 xl:gap-1 flex-1 min-w-0 transition-lux">
+      <nav className="app-no-drag bg-brand-surface dark:bg-white/[0.04] dark:backdrop-blur-xl dark:border dark:border-white/10 shadow-sm dark:shadow-none lux-card p-1 xl:p-1.5 rounded-full flex items-center justify-center gap-0.5 xl:gap-1 flex-1 min-w-0 transition-lux">
         {menuItems.map((item) => {
           const Icon = item.icon;
           const isActive = activeTab === item.id;
@@ -90,12 +92,12 @@ export default function Header({ activeTab, setActiveTab, onAdminClick, onNewCli
       </nav>
 
       {/* Bloco Direito: Terminal e Acesso Gerencial */}
-      <div className="bg-brand-surface dark:bg-white/[0.04] dark:backdrop-blur-xl dark:border dark:border-white/10 shadow-sm dark:shadow-none lux-card px-2 xl:px-3 py-1.5 xl:py-2 rounded-full flex items-center gap-2 xl:gap-4 shrink-0 transition-lux">
+      <div className="app-no-drag bg-brand-surface dark:bg-white/[0.04] dark:backdrop-blur-xl dark:border dark:border-white/10 shadow-sm dark:shadow-none lux-card px-2 xl:px-3 py-1.5 xl:py-2 rounded-full flex items-center gap-2 xl:gap-4 shrink-0 transition-lux">
         
         {/* Botão rápido para o Caixa abrir um novo atendimento */}
         <button 
           onClick={onNewClientClick}
-          className="flex items-center gap-1.5 xl:gap-2 bg-brand-accent/10 hover:bg-brand-accent/20 text-brand-accent px-3 xl:px-4 py-1.5 xl:py-2 rounded-full font-semibold transition-all text-xs xl:text-sm ml-1"
+          className="app-no-drag flex items-center gap-1.5 xl:gap-2 bg-brand-accent/10 hover:bg-brand-accent/20 text-brand-accent px-3 xl:px-4 py-1.5 xl:py-2 rounded-full font-semibold transition-all text-xs xl:text-sm ml-1"
         >
           <UserPlus className="h-4 w-4 shrink-0" />
           <span className="hidden sm:inline whitespace-nowrap">Novo Cliente</span>
@@ -123,7 +125,7 @@ export default function Header({ activeTab, setActiveTab, onAdminClick, onNewCli
           {userRole === 'operador' ? (
             <button 
               onClick={onAdminClick}
-              className="p-2 xl:p-2.5 rounded-full text-brand-muted hover:bg-brand-bg hover:text-brand-ink transition-colors flex items-center justify-center border border-transparent"
+              className="app-no-drag p-2 xl:p-2.5 rounded-full text-brand-muted hover:bg-brand-bg hover:text-brand-ink transition-colors flex items-center justify-center border border-transparent"
               title="Acesso Gerencial"
             >
               <Lock className="h-4 w-4" />
@@ -131,7 +133,7 @@ export default function Header({ activeTab, setActiveTab, onAdminClick, onNewCli
           ) : (
             <button 
               onClick={onLogout}
-              className="p-2 xl:p-2.5 rounded-full text-brand-muted hover:bg-brand-danger/10 hover:text-brand-danger transition-colors flex items-center justify-center border border-transparent"
+              className="app-no-drag p-2 xl:p-2.5 rounded-full text-brand-muted hover:bg-brand-danger/10 hover:text-brand-danger transition-colors flex items-center justify-center border border-transparent"
               title="Sair"
             >
               <LogOut className="h-4 w-4" />

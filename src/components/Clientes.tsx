@@ -1,16 +1,35 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Search, Filter, MessageCircle, ShoppingCart, Cloud, CloudDrizzle, CloudOff, SearchX, Check, Database } from 'lucide-react';
+import { Search, Filter, MessageCircle, ShoppingCart, Cloud, CloudDrizzle, CloudOff, SearchX, Check, Database, ChevronDown, Download, Store } from 'lucide-react';
+import { toast } from 'sonner';
 import DriveSyncModal from './DriveSyncModal';
 import { Card, CardHeader, CardContent } from '@/components/ui/card';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table';
 import ClientProfileModal from './ClientProfileModal';
 import { supabase } from '@/lib/supabaseClient';
+import {
+  SESSION_PHOTO_SELECT,
+  SESSION_PHOTO_SELECT_SAFE,
+  fetchAllSessionPhotos,
+  isMissingColumnError,
+  isPhotoPurchased,
+  mergeSessionPhotos,
+  shapeSessionPhoto,
+  type SessionPhoto,
+} from '@/lib/sessionPhotos';
+import {
+  buildDriveDownloadMessage,
+  buildOnlineStoreMessage,
+  dispatchWhatsAppMessage,
+  getOnlineShopUrl,
+  normalizeWhatsAppPhone,
+} from '@/lib/whatsapp';
+import { publishCartPreset, type CartPresetPayload } from '@/lib/cartBridge';
 
 export default function Clientes() {
   const [clientsList, setClientsList] = useState<any[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [activeFilter, setActiveFilter] = useState('Todos');
-  const [selectedClient, setSelectedClient] = useState<any>(null);
+  const [selectedClientId, setSelectedClientId] = useState<string | null>(null);
   const [isFilterOpen, setIsFilterOpen] = useState(false);
   const [syncModalClient, setSyncModalClient] = useState<any>(null);
   
@@ -40,22 +59,53 @@ export default function Clientes() {
     };
   }, []);
 
+  // O modal de perfil é derivado da listagem (e não de uma cópia do objeto): fotos
+  // recém-importadas do cartão SD aparecem sem precisar fechar e reabrir o modal.
+  const selectedClient = React.useMemo(
+    () => clientsList.find((client: any) => client.id === selectedClientId) || null,
+    [clientsList, selectedClientId]
+  );
+
   async function loadClients() {
-    const [ { data, error }, { data: onlineOrders } ] = await Promise.all([
-      supabase
+    /**
+     * Monta a consulta de sessões. A lista de fotos traz `expires_at` e `is_purchased`
+     * (regras de expiração e de compra) — sem nenhum `limit` imposto pelo front.
+     */
+    const buildSessionsQuery = (photoColumns: string, includeSessionExpiry: boolean) => {
+      const sessionColumns = [
+        'id',
+        'created_at',
+        'status',
+        'drive_status',
+        'drive_folder_id',
+        'cover_photo_url',
+        'local_cache_dir',
+      ];
+      if (includeSessionExpiry) sessionColumns.push('expires_at');
+
+      return supabase
         .from('photo_sessions')
         .select(`
-          id,
-          created_at,
-          status,
-          drive_status,
-          cover_photo_url,
-          local_cache_dir,
+          ${sessionColumns.join(', ')},
           clients ( id, name, phone, cpf ),
           employees ( id, name, avatar_url ),
-          session_photos ( id, original_name, preview_url, local_original_path, status )
+          session_photos ( ${photoColumns} )
         `)
-        .order('created_at', { ascending: false }),
+        .order('created_at', { ascending: false });
+    };
+
+    const [ { data, error }, { data: onlineOrders } ] = await Promise.all([
+      // Consulta completa + degradação graciosa caso o banco ainda não tenha as colunas extras.
+      (async () => {
+        const fullResult = await buildSessionsQuery(SESSION_PHOTO_SELECT, true);
+        if (!fullResult.error || !isMissingColumnError(fullResult.error)) return fullResult;
+
+        console.warn(
+          '[Clientes] Colunas opcionais ausentes em session_photos. Recarregando com a consulta de compatibilidade.',
+          fullResult.error.message
+        );
+        return buildSessionsQuery(SESSION_PHOTO_SELECT_SAFE, false);
+      })(),
       supabase.from('online_orders').select('client_id').in('payment_status', ['paid', 'delivered'])
     ]);
       
@@ -65,6 +115,25 @@ export default function Clientes() {
     }
 
     if (data) {
+      // 2ª camada de garantia: leitura dedicada e paginada de `session_photos`.
+      // Garante que NENHUMA foto importada fique de fora por truncamento do embed.
+      const sessionIds = data.map((item: any) => item.id).filter(Boolean);
+      let allPhotos: SessionPhoto[] = [];
+      try {
+        allPhotos = await fetchAllSessionPhotos(sessionIds);
+      } catch (photoErr) {
+        console.warn('[Clientes] Falha ao complementar a listagem de fotos da sessão:', photoErr);
+      }
+
+      const photosBySession = new Map<string, SessionPhoto[]>();
+      allPhotos.forEach((photo) => {
+        const key = String(photo.sessionId || '');
+        if (!key) return;
+        const bucket = photosBySession.get(key);
+        if (bucket) bucket.push(photo);
+        else photosBySession.set(key, [photo]);
+      });
+
       const mappedData = data.map((item: any) => {
         let currentStatus = item.status || 'Pendente';
         const hasOnlineOrder = onlineOrders?.some(o => o.client_id === item.clients?.id);
@@ -75,6 +144,12 @@ export default function Clientes() {
            currentStatus = 'PDV';
         }
 
+        // Une as fotos do embed (SSD local) com as da leitura paginada (Nuvem), sem duplicar.
+        const photos = mergeSessionPhotos(
+          (item.session_photos || []).map(shapeSessionPhoto),
+          photosBySession.get(String(item.id)) || []
+        );
+
         return {
           id: item.id,
           clientId: item.clients?.id,
@@ -83,17 +158,15 @@ export default function Clientes() {
           cpf: item.clients?.cpf || '',
           photographer: item.employees?.name || 'Não atribuído',
           date: new Date(item.created_at).toLocaleString('pt-BR'),
+          createdAt: item.created_at,
+          expiresAt: item.expires_at || null,
           status: currentStatus,
-        driveStatus: item.drive_status || 'pending',
-        avatar: item.cover_photo_url || item.employees?.avatar_url || null,
-        photos: (item.session_photos || []).map((sp: any) => ({
-          id: sp.id,
-          url: sp.local_original_path || sp.preview_url,
-          localOriginalPath: sp.local_original_path,
-          previewUrl: sp.preview_url,
-          originalName: sp.original_name,
-          status: sp.status
-        }))
+          driveStatus: item.drive_status || 'pending',
+          driveFolderId: item.drive_folder_id || null,
+          avatar: item.cover_photo_url || item.employees?.avatar_url || null,
+          photos,
+          pendingPhotosCount: photos.filter((photo) => !isPhotoPurchased(photo)).length,
+          purchasedPhotosCount: photos.filter(isPhotoPurchased).length,
         };
       });
       setClientsList(mappedData);
@@ -145,6 +218,169 @@ export default function Clientes() {
       client.status === 'Abandonado';
     return matchesSearch && matchesFilter;
   });
+
+  /* ───────────────────────── Ações de WhatsApp / PDV ───────────────────────── */
+
+  const [whatsappMenu, setWhatsappMenu] = useState<{ client: any; x: number; y: number } | null>(null);
+
+  // Fecha o menu flutuante ao pressionar Esc, redimensionar a janela ou rolar a tabela.
+  useEffect(() => {
+    if (!whatsappMenu) return;
+
+    const closeMenu = () => setWhatsappMenu(null);
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') closeMenu();
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('resize', closeMenu);
+    document.addEventListener('scroll', closeMenu, true);
+
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('resize', closeMenu);
+      document.removeEventListener('scroll', closeMenu, true);
+    };
+  }, [whatsappMenu]);
+
+  const toggleWhatsAppMenu = (event: React.MouseEvent<HTMLButtonElement>, client: any) => {
+    event.stopPropagation();
+    const rect = event.currentTarget.getBoundingClientRect();
+    setWhatsappMenu(prev =>
+      prev?.client?.id === client.id ? null : { client, x: rect.right, y: rect.bottom + 8 }
+    );
+  };
+
+  /** Recupera o ID da pasta no Drive: usa o cache da listagem e cai para o banco quando necessário. */
+  const resolveDriveFolderId = async (client: any): Promise<string | null> => {
+    if (client?.driveFolderId) return client.driveFolderId;
+    try {
+      const { data } = await supabase
+        .from('photo_sessions')
+        .select('drive_folder_id')
+        .eq('id', client.id)
+        .maybeSingle();
+      return data?.drive_folder_id || null;
+    } catch (err) {
+      console.warn('[WhatsApp] Falha ao consultar a pasta do Drive:', err);
+      return null;
+    }
+  };
+
+  /** Ação 1: reenvia o link de download em alta resolução (pasta do Google Drive). */
+  const handleResendDownloadLink = async (client: any) => {
+    setWhatsappMenu(null);
+
+    if (!normalizeWhatsAppPhone(client.phone)) {
+      toast.error('Cliente sem telefone válido cadastrado.');
+      return;
+    }
+
+    const toastId = toast.loading('Buscando a pasta de alta resolução no Google Drive...');
+    const folderId = await resolveDriveFolderId(client);
+
+    if (!folderId) {
+      toast.error('Esta sessão ainda não possui pasta sincronizada no Google Drive.', {
+        id: toastId,
+        description: 'Conclua o upload das fotos compradas (ícone de nuvem na linha do cliente) antes de reenviar o link.'
+      });
+      return;
+    }
+
+    const driveLink = `https://drive.google.com/drive/folders/${folderId}`;
+    const result = await dispatchWhatsAppMessage({
+      phone: client.phone,
+      message: buildDriveDownloadMessage(client.name, driveLink),
+      clientName: client.name,
+      clientCpf: client.cpf,
+      source: 'desktop_reenvio_link_drive',
+      extra: { driveLink }
+    });
+
+    if (result.channel === 'n8n') {
+      toast.success('Link de download reenviado via WhatsApp!', { id: toastId, description: driveLink });
+    } else if (result.sent) {
+      toast.success('WhatsApp aberto com o link de download pronto para envio.', { id: toastId, description: driveLink });
+    } else {
+      toast.error('Não foi possível disparar a mensagem.', {
+        id: toastId,
+        description: 'Confira o telefone do cliente e as configurações de WhatsApp do sistema.'
+      });
+    }
+  };
+
+  /** Ação 2: convida o cliente a comprar pela vitrine online (PIX / Cartão). */
+  const handleSendOnlineShopLink = async (client: any) => {
+    setWhatsappMenu(null);
+
+    if (!normalizeWhatsAppPhone(client.phone)) {
+      toast.error('Cliente sem telefone válido cadastrado.');
+      return;
+    }
+
+    const shopUrl = getOnlineShopUrl(client.id);
+    const toastId = toast.loading('Preparando o link da vitrine online...');
+    const result = await dispatchWhatsAppMessage({
+      phone: client.phone,
+      message: buildOnlineStoreMessage(client.name, shopUrl),
+      clientName: client.name,
+      clientCpf: client.cpf,
+      source: 'desktop_link_compra_online',
+      extra: { shopLink: shopUrl, link: shopUrl }
+    });
+
+    if (result.channel === 'n8n') {
+      toast.success('Link de compra online enviado via WhatsApp!', { id: toastId, description: shopUrl });
+    } else if (result.sent) {
+      toast.success('WhatsApp aberto com o link da vitrine pronto para envio.', { id: toastId, description: shopUrl });
+    } else {
+      toast.error('Não foi possível disparar a mensagem.', {
+        id: toastId,
+        description: 'Confira o telefone do cliente e as configurações de WhatsApp do sistema.'
+      });
+    }
+  };
+
+  /** Botão de carrinho/PDV: abre o caixa já com a sessão deste cliente carregada. */
+  const handleOpenCart = (client: any) => {
+    const photos: SessionPhoto[] = client?.photos || [];
+    const pendingPhotos = photos.filter((photo) => !isPhotoPurchased(photo));
+
+    if (photos.length === 0) {
+      toast.error('Nenhuma foto importada nesta sessão ainda.', {
+        description: 'Importe as fotos do cartão SD (Novo Cliente) antes de abrir o caixa.'
+      });
+      return;
+    }
+
+    if (pendingPhotos.length === 0) {
+      toast.info('Todas as fotos desta sessão já estão pagas e liberadas.', {
+        description: 'Não há itens pendentes para faturar no caixa.'
+      });
+      return;
+    }
+
+    const payload: CartPresetPayload = {
+      source: 'clientes',
+      sessionId: client.id,
+      clientId: client.clientId || null,
+      clientName: client.name,
+      clientPhone: client.phone,
+      clientCpf: client.cpf,
+      status: client.status,
+      driveFolderId: client.driveFolderId || null,
+      photos,
+      pendingPhotos
+    };
+
+    // Publica o payload para o PDV (que é montado sob demanda) e mantém o evento global existente.
+    publishCartPreset(payload);
+    window.dispatchEvent(new CustomEvent('add-to-cart', { detail: payload }));
+
+    toast.success(`Abrindo o caixa com a sessão de ${client.name}...`, {
+      description: `${pendingPhotos.length} foto(s) aguardando faturamento.`
+    });
+  };
 
   return (
     <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500 ease-out pt-4">
@@ -221,7 +457,7 @@ export default function Clientes() {
                   {filteredClients.map((client) => (
                     <TableRow
                       key={client.id}
-                      onClick={() => setSelectedClient(client)}
+                      onClick={() => setSelectedClientId(client.id)}
                       className="border-b-border-dashed dark:border-white/[0.06] cursor-pointer group hover:bg-muted/30 dark:hover:bg-white/[0.05] transition-colors duration-150 ease-out"
                     >
                       <TableCell className="px-8 py-5">
@@ -268,22 +504,30 @@ export default function Clientes() {
                       <TableCell className="px-8 py-5">{getStatusBadge(client.status)}</TableCell>
                       <TableCell className="px-8 py-5">
                         <div className="flex items-center justify-end gap-2">
-                          {/* Botão de WhatsApp */}
+                          {/* Botão de WhatsApp (dropdown de ações de mensagem) */}
                           <button
-                            onClick={(e) => { e.stopPropagation(); }}
-                            className={`p-2.5 rounded-full transition-lux bg-card dark:bg-white/[0.06] shadow-sm hover:bg-muted dark:hover:bg-white/[0.12] border border-border dark:border-white/10 active:scale-95
-                              ${client.phone ? 'text-primary' : 'text-muted-foreground/30 cursor-not-allowed'}
+                            onClick={(e) => toggleWhatsAppMenu(e, client)}
+                            className={`flex items-center gap-1 p-2.5 rounded-full transition-lux bg-card dark:bg-white/[0.06] shadow-sm hover:bg-muted dark:hover:bg-white/[0.12] border active:scale-95
+                              ${client.phone
+                                ? `text-primary border-border dark:border-white/10 ${whatsappMenu?.client?.id === client.id ? 'ring-2 ring-primary/40 bg-muted dark:bg-white/[0.12]' : ''}`
+                                : 'text-muted-foreground/30 cursor-not-allowed border-border dark:border-white/10'
+                              }
                             `}
-                            title={client.phone ? "WhatsApp" : "Sem telefone"}
+                            title={client.phone ? "Ações de WhatsApp" : "Sem telefone cadastrado"}
                             disabled={!client.phone}
+                            aria-haspopup="menu"
+                            aria-expanded={whatsappMenu?.client?.id === client.id}
                           >
                             <MessageCircle className="h-4 w-4" />
+                            <ChevronDown className={`h-3 w-3 transition-transform duration-200 ${whatsappMenu?.client?.id === client.id ? 'rotate-180' : ''}`} />
                           </button>
-                          {/* Botão de PDV */}
+                          {/* Botão de PDV: abre o caixa já com a sessão deste cliente carregada */}
                           <button 
-                            onClick={(e) => { e.stopPropagation(); }}
-                            className="p-2.5 rounded-full text-foreground hover:bg-muted transition-colors bg-card shadow-sm border border-border ml-2"
-                            title="Vender (PDV)"
+                            onClick={(e) => { e.stopPropagation(); handleOpenCart(client); }}
+                            className="p-2.5 rounded-full text-foreground hover:bg-muted transition-colors bg-card shadow-sm border border-border ml-2 active:scale-95"
+                            title={client.pendingPhotosCount > 0
+                              ? `Faturar ${client.pendingPhotosCount} foto(s) no PDV`
+                              : "Vender (PDV)"}
                           >
                             <ShoppingCart className="h-4 w-4" />
                           </button>
@@ -317,8 +561,8 @@ export default function Clientes() {
       </Card>
 
       <ClientProfileModal 
-        isOpen={!!selectedClient} 
-        onClose={() => setSelectedClient(null)} 
+        isOpen={!!selectedClientId} 
+        onClose={() => setSelectedClientId(null)} 
         client={selectedClient} 
       />
       <DriveSyncModal 
@@ -326,6 +570,54 @@ export default function Clientes() {
         onClose={() => setSyncModalClient(null)}
         client={syncModalClient}
       />
+
+      {/* Menu flutuante de ações do WhatsApp (position: fixed para não ser cortado pelo scroll da tabela) */}
+      {whatsappMenu && (
+        <>
+          <div className="fixed inset-0 z-[60]" onClick={() => setWhatsappMenu(null)} />
+          <div
+            role="menu"
+            className="fixed z-[61] w-80 bg-card dark:bg-[#1A0B18]/95 dark:backdrop-blur-xl border border-border dark:border-white/10 rounded-2xl shadow-xl dark:shadow-black/60 lux-card overflow-hidden animate-in fade-in slide-in-from-top-2 duration-150"
+            style={{
+              top: whatsappMenu.y + 190 > window.innerHeight ? Math.max(12, whatsappMenu.y - 198) : whatsappMenu.y,
+              left: Math.max(12, Math.min(whatsappMenu.x - 320, window.innerWidth - 332)),
+            }}
+          >
+            <div className="px-4 pt-3 pb-2 border-b border-border-dashed">
+              <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground truncate">
+                WhatsApp · {whatsappMenu.client.name}
+              </p>
+              <p className="text-[11px] text-muted-foreground font-mono mt-0.5 truncate">
+                {whatsappMenu.client.phone || 'Sem telefone'}
+              </p>
+            </div>
+
+            <button
+              role="menuitem"
+              onClick={() => handleResendDownloadLink(whatsappMenu.client)}
+              className="w-full flex items-start gap-3 px-4 py-3 text-left hover:bg-muted dark:hover:bg-white/[0.06] transition-colors"
+            >
+              <Download className="h-4 w-4 text-primary mt-0.5 shrink-0" />
+              <span>
+                <span className="block text-sm font-semibold text-foreground">Reenviar Link de Download</span>
+                <span className="block text-[11px] text-muted-foreground mt-0.5">Alta resolução (Google Drive) — use em caso de erro no envio anterior.</span>
+              </span>
+            </button>
+
+            <button
+              role="menuitem"
+              onClick={() => handleSendOnlineShopLink(whatsappMenu.client)}
+              className="w-full flex items-start gap-3 px-4 py-3 text-left border-t border-border-dashed hover:bg-muted dark:hover:bg-white/[0.06] transition-colors"
+            >
+              <Store className="h-4 w-4 text-brand-info mt-0.5 shrink-0" />
+              <span>
+                <span className="block text-sm font-semibold text-foreground">Enviar Link de Compra Online</span>
+                <span className="block text-[11px] text-muted-foreground mt-0.5">Vitrine do site para escolher e pagar via PIX ou Cartão.</span>
+              </span>
+            </button>
+          </div>
+        </>
+      )}
     </div>
   );
 }

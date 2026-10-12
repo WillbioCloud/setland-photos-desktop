@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { X, Cloud, CloudUpload, Camera, CheckCircle2, User, Phone, DollarSign, Printer, Trash2, Globe, Monitor, Loader2, Plus, Store } from 'lucide-react';
+import { X, Cloud, CloudUpload, Camera, CheckCircle2, User, Phone, DollarSign, Printer, Trash2, Globe, Monitor, Loader2, Plus, Store, Clock, Check, ImageOff } from 'lucide-react';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
@@ -8,6 +8,14 @@ import PresentationModal from './PresentationModal';
 import SelectionFormatModal from './SelectionFormatModal';
 import { supabase } from '@/lib/supabaseClient';
 import { calculatePricing, type PackageDef } from '@/lib/pricingEngine';
+import {
+  fetchAllSessionPhotos,
+  getPhotoExpiryInfo,
+  isPhotoPurchased,
+  mergeSessionPhotos,
+  shapeSessionPhoto,
+  type SessionPhoto,
+} from '@/lib/sessionPhotos';
 
 interface ClientProfileModalProps {
   isOpen: boolean;
@@ -22,19 +30,63 @@ const mockPhotos = [
   { id: 4, url: 'https://images.unsplash.com/photo-1511285560929-80b456fea0bc?q=80&w=300&auto=format&fit=crop', status: 'pending' },
 ];
 
+/**
+ * Selo de expiração (contagem regressiva de 30 dias da retenção das fotos).
+ * Em alerta (vermelho pulsante) quando faltam 3 dias ou menos para a exclusão física.
+ */
+function PhotoExpiryBadge({ photo, fallbackDate }: { photo: any; fallbackDate?: unknown }) {
+  const { daysRemaining, isUrgent, label } = getPhotoExpiryInfo(photo, fallbackDate);
+
+  if (daysRemaining === null) return null;
+
+  return (
+    <div
+      className={`absolute bottom-2 right-2 flex items-center gap-1 text-[10px] px-2 py-0.5 rounded border pointer-events-none backdrop-blur-sm
+        ${isUrgent
+          ? 'bg-rose-500/80 text-white border-rose-400 animate-pulse'
+          : 'bg-black/60 text-white/80 border-white/10'
+        }`}
+      title="Exclusão física programada pelo robô de limpeza de 30 dias"
+    >
+      <Clock className="h-3 w-3" />
+      {label}
+    </div>
+  );
+}
+
 export default function ClientProfileModal({ isOpen, onClose, client }: ClientProfileModalProps) {
-  const [selectedPhotos, setSelectedPhotos] = useState<number[]>([]);
+  const [selectedPhotos, setSelectedPhotos] = useState<(string | number)[]>([]);
   const [printer, setPrinter] = useState("");
   const [printFormat, setPrintFormat] = useState("Apenas Imprimir (Avulsa)");
   const [isPresenting, setIsPresenting] = useState(false);
   const [isFormatModalOpen, setIsFormatModalOpen] = useState(false);
 
   const [activePhotoTab, setActivePhotoTab] = useState<'apresentacao' | 'site'>('apresentacao');
-  const [photosList, setPhotosList] = useState(client?.photos || []);
+  const [photosList, setPhotosList] = useState<SessionPhoto[]>(() => (client?.photos || []).map(shapeSessionPhoto));
   const [orderInfo, setOrderInfo] = useState<{ total: number; source: string | null }>({ total: 0, source: null });
 
+  const sessionId = client?.id;
+
+  /**
+   * Hidrata a listagem com TODAS as fotos da sessão gravadas em `session_photos`.
+   * O array recebido por props pode estar desatualizado (foto recém-importada) ou truncado,
+   * então a leitura é paginada e sem limit, unindo SSD local (`local_original_path`) e Nuvem
+   * (`preview_url`) — nenhuma foto importada fica oculta da listagem.
+   */
+  const syncSessionPhotos = React.useCallback(async () => {
+    if (!sessionId) return;
+    try {
+      const fromDatabase = await fetchAllSessionPhotos([sessionId]);
+      if (fromDatabase.length === 0) return;
+      setPhotosList(prev => mergeSessionPhotos(prev.map(shapeSessionPhoto), fromDatabase));
+    } catch (err) {
+      console.warn('[Modal Cliente] Falha ao carregar todas as fotos da sessão:', err);
+    }
+  }, [sessionId]);
+
   React.useEffect(() => {
-    if (client?.photos) setPhotosList(client.photos);
+    if (client?.photos) setPhotosList((client.photos || []).map(shapeSessionPhoto));
+    void syncSessionPhotos();
 
     async function fetchOrderDetails() {
       if (!client) return;
@@ -54,9 +106,31 @@ export default function ClientProfileModal({ isOpen, onClose, client }: ClientPr
       setOrderInfo({ total: 0, source: null });
     }
     fetchOrderDetails();
-  }, [client]);
+  }, [client, syncSessionPhotos]);
+
+  // Espelha em tempo real novas importações e uploads enquanto o modal está aberto.
+  React.useEffect(() => {
+    if (!isOpen || !sessionId) return;
+
+    const handleRefresh = () => { void syncSessionPhotos(); };
+
+    window.addEventListener('session-updated', handleRefresh);
+    window.addEventListener('drive-photo-synced', handleRefresh);
+
+    return () => {
+      window.removeEventListener('session-updated', handleRefresh);
+      window.removeEventListener('drive-photo-synced', handleRefresh);
+    };
+  }, [isOpen, sessionId, syncSessionPhotos]);
 
   const sessionPhotos = photosList;
+  // Fotos exibíveis em tela cheia precisam de uma fonte real (SSD local ou Nuvem).
+  const presentablePhotos = sessionPhotos.filter(photo => Boolean(photo.url));
+  // Data de referência para projetar 30 dias de retenção quando a foto não tem `expires_at`.
+  const sessionReferenceDate = client?.createdAt || client?.date;
+  // Fonte da imagem: prioriza o original do SSD e cai para a miniatura da Nuvem.
+  const getPhotoSource = (photo: any) => photo?.localOriginalPath || photo?.previewUrl || photo?.url || '';
+  const getCloudSource = (photo: any) => photo?.previewUrl || photo?.localOriginalPath || photo?.url || '';
 
   const handleDeletePhoto = async (photoId: string | number) => {
     const toastId = toast.loading("Removendo foto do banco de dados...");
@@ -119,7 +193,7 @@ export default function ClientProfileModal({ isOpen, onClose, client }: ClientPr
     return name.split(' ').map(n => n[0]).slice(0, 2).join('').toUpperCase();
   };
 
-  const togglePhoto = (id: number) => {
+  const togglePhoto = (id: string | number) => {
     setSelectedPhotos(prev => 
       prev.includes(id) ? prev.filter(pId => pId !== id) : [...prev, id]
     );
@@ -180,6 +254,12 @@ export default function ClientProfileModal({ isOpen, onClose, client }: ClientPr
                 <Cloud className="h-3.5 w-3.5" />
                 {photosList.length} foto(s) na sessão
               </div>
+              {sessionPhotos.some(isPhotoPurchased) && (
+                <div className="flex items-center gap-1.5 px-3 py-1 bg-emerald-600/10 text-emerald-600 rounded-full text-xs font-medium border border-emerald-600/25">
+                  <Check className="h-3.5 w-3.5" />
+                  {sessionPhotos.filter(isPhotoPurchased).length} comprada(s)
+                </div>
+              )}
             </div>
             
             <div className="flex flex-wrap items-center gap-6 mt-3">
@@ -245,27 +325,59 @@ export default function ClientProfileModal({ isOpen, onClose, client }: ClientPr
               )}
             </div>
 
+            {/* Estado vazio: sessão sem fotos importadas */}
+            {sessionPhotos.length === 0 && (
+              <div className="py-16 text-center flex flex-col items-center border border-dashed border-brand-border rounded-2xl">
+                <ImageOff className="h-8 w-8 text-brand-muted mb-3" />
+                <p className="text-brand-ink text-sm font-medium">Nenhuma foto importada nesta sessão</p>
+                <p className="text-brand-muted text-xs mt-1 max-w-sm">
+                  Use “Adicionar Fotos” para importar do cartão SD / SSD e vincular à sessão deste cliente.
+                </p>
+              </div>
+            )}
+
             {/* Grid da Aba Apresentação (Fotos Originais do SSD em Alta Resolução) */}
-            {activePhotoTab === 'apresentacao' && (
+            {activePhotoTab === 'apresentacao' && sessionPhotos.length > 0 && (
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                 {sessionPhotos.map((photo: any) => {
                   const isSelected = selectedPhotos.includes(photo.id);
+                  const source = getPhotoSource(photo);
                   return (
                     <div
                       key={photo.id}
                       onClick={() => togglePhoto(photo.id)}
                       className={`relative aspect-square rounded-xl overflow-hidden bg-brand-bg border shadow-sm group cursor-pointer transition-all ${isSelected ? 'ring-4 ring-primary border-transparent' : 'border-brand-border'}`}
                     >
-                      <img
-                        src={photo.localOriginalPath || photo.url}
-                        alt="Foto da sessão"
-                        onError={(e) => {
-                          if (photo.previewUrl && e.currentTarget.src !== photo.previewUrl) {
-                            e.currentTarget.src = photo.previewUrl;
-                          }
-                        }}
-                        className={`w-full h-full object-cover transition-transform duration-500 ${isSelected ? 'scale-105' : 'group-hover:scale-105'}`}
-                      />
+                      {source ? (
+                        <img
+                          src={source}
+                          alt={photo.originalName || "Foto da sessão"}
+                          onError={(e) => {
+                            const fallback = getCloudSource(photo);
+                            if (fallback && e.currentTarget.src !== fallback) {
+                              e.currentTarget.src = fallback;
+                            }
+                          }}
+                          className={`w-full h-full object-cover transition-transform duration-500 ${isSelected ? 'scale-105' : 'group-hover:scale-105'}`}
+                        />
+                      ) : (
+                        <div className="w-full h-full flex flex-col items-center justify-center gap-1.5 text-brand-muted">
+                          <ImageOff className="h-6 w-6" />
+                          <span className="text-[10px]">Sem arquivo</span>
+                        </div>
+                      )}
+
+                      {/* Selo verde: foto já adquirida pelo cliente */}
+                      {isPhotoPurchased(photo) && (
+                        <div className="absolute top-2 left-2 bg-emerald-600/90 text-white rounded-md px-2 py-0.5 text-[10px] font-bold shadow flex items-center gap-1 pointer-events-none">
+                          <Check className="h-3 w-3" />
+                          Comprada
+                        </div>
+                      )}
+
+                      {/* Contagem regressiva para a exclusão física da foto */}
+                      <PhotoExpiryBadge photo={photo} fallbackDate={sessionReferenceDate} />
+
                       {isSelected && (
                         <div className="absolute top-2 right-2 p-1.5 rounded-full shadow-sm backdrop-blur-md bg-brand-surface/90 border border-brand-border">
                           <CheckCircle2 className="h-4 w-4 text-primary" />
@@ -278,36 +390,63 @@ export default function ClientProfileModal({ isOpen, onClose, client }: ClientPr
             )}
 
             {/* Grid da Aba Fotos do Site (Miniaturas WebP com Nuvem + Ação de Excluir) */}
-            {activePhotoTab === 'site' && (
+            {activePhotoTab === 'site' && sessionPhotos.length > 0 && (
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                {sessionPhotos.map((photo: any) => (
-                  <div
-                    key={photo.id}
-                    className="relative aspect-square rounded-xl overflow-hidden bg-brand-bg border border-brand-border shadow-sm group"
-                  >
-                    <img
-                      src={photo.previewUrl || photo.url}
-                      alt="Miniatura WebP da Nuvem"
-                      className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
-                    />
-
-                    {/* Botão de Excluir Foto do Banco */}
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleDeletePhoto(photo.id);
-                      }}
-                      className="absolute top-2 right-2 p-2 rounded-lg bg-black/60 text-white hover:bg-destructive transition-colors backdrop-blur-sm shadow-md"
-                      title="Excluir do banco de dados"
+                {sessionPhotos.map((photo: any) => {
+                  const cloudSource = getCloudSource(photo);
+                  return (
+                    <div
+                      key={photo.id}
+                      className="relative aspect-square rounded-xl overflow-hidden bg-brand-bg border border-brand-border shadow-sm group"
                     >
-                      <Trash2 className="h-4 w-4" />
-                    </button>
-                    
-                    <div className="absolute bottom-2 left-2 flex items-center gap-1.5 px-2 py-1 bg-black/60 backdrop-blur-sm text-white/90 rounded-md text-[10px] font-medium border border-white/10">
-                      <Cloud className="w-3 h-3" /> Nuvem / Site
+                      {cloudSource ? (
+                        <img
+                          src={cloudSource}
+                          alt={photo.originalName || "Miniatura WebP da Nuvem"}
+                          onError={(e) => {
+                            const fallback = getPhotoSource(photo);
+                            if (fallback && e.currentTarget.src !== fallback) {
+                              e.currentTarget.src = fallback;
+                            }
+                          }}
+                          className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
+                        />
+                      ) : (
+                        <div className="w-full h-full flex flex-col items-center justify-center gap-1.5 text-brand-muted">
+                          <ImageOff className="h-6 w-6" />
+                          <span className="text-[10px]">Sem miniatura</span>
+                        </div>
+                      )}
+
+                      {/* Selo verde: foto já adquirida pelo cliente */}
+                      {isPhotoPurchased(photo) && (
+                        <div className="absolute top-2 left-2 bg-emerald-600/90 text-white rounded-md px-2 py-0.5 text-[10px] font-bold shadow flex items-center gap-1 pointer-events-none">
+                          <Check className="h-3 w-3" />
+                          Comprada
+                        </div>
+                      )}
+
+                      {/* Botão de Excluir Foto do Banco */}
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleDeletePhoto(photo.id);
+                        }}
+                        className="absolute top-2 right-2 p-2 rounded-lg bg-black/60 text-white hover:bg-destructive transition-colors backdrop-blur-sm shadow-md"
+                        title="Excluir do banco de dados"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                      
+                      <div className="absolute bottom-2 left-2 flex items-center gap-1.5 px-2 py-1 bg-black/60 backdrop-blur-sm text-white/90 rounded-md text-[10px] font-medium border border-white/10">
+                        <Cloud className="w-3 h-3" /> Nuvem / Site
+                      </div>
+
+                      {/* Contagem regressiva para a exclusão física da foto */}
+                      <PhotoExpiryBadge photo={photo} fallbackDate={sessionReferenceDate} />
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>
@@ -316,7 +455,7 @@ export default function ClientProfileModal({ isOpen, onClose, client }: ClientPr
       <PresentationModal 
         isOpen={isPresenting}
         onClose={() => setIsPresenting(false)}
-        photos={sessionPhotos}
+        photos={presentablePhotos}
         selectedPhotos={selectedPhotos}
         togglePhoto={togglePhoto}
         onConfirmSelection={() => {
