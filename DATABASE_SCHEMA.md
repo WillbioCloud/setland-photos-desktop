@@ -85,14 +85,27 @@ Tabelas públicas encontradas no banco atualizado:
 - `local_cache_dir` (text, YES NULL)
 
 ### Tabela: `session_photos`
-- `id` (uuid, NO NULL, Default: `gen_random_uuid()`) - **PK**
-- `session_id` (uuid, NO NULL)
-- `created_at` (timestamptz, NO NULL, Default: `timezone('utc'::text, now())`)
-- `original_name` (text, NO NULL)
-- `preview_url` (text, YES NULL)
-- `drive_file_id` (text, YES NULL)
-- `status` (text, YES NULL, Default: `'pending'`)
-- `local_original_path` (text, YES NULL)
+Registra cada imagem individual de uma sessão importada do cartão SD.
+
+| Coluna | Tipo | Padrão | Descrição |
+| :--- | :--- | :--- | :--- |
+| `id` | uuid / bigint | gen_random_uuid() | Identificador único da foto |
+| `session_id` | uuid / bigint | - | FK vinculada a `photo_sessions.id` |
+| `original_name` | text | - | Nome original do arquivo (ex: `DSC_0042.JPG`) |
+| `preview_url` | text | - | URL pública da miniatura WebP com marca d'água no Bucket |
+| `local_original_path`| text | - | Caminho absoluto do arquivo original em alta no SSD local |
+| `status` | text | `'pending'` | Estado da foto: `pending`, `selected`, `synced` |
+| `is_purchased` | boolean | `false` | Indica se a foto já foi paga/adquirida |
+| `is_printed` | boolean | `false` | Indica se a foto já foi impressa no quiosque |
+| `purchase_date` | timestamptz | `null` | Data e hora em que a compra foi confirmada |
+| `expires_at` | timestamptz | `now() + 30 days` | Data limite de retenção física antes da limpeza do robô |
+| `created_at` | timestamptz | `now()` | Timestamp de importação |
+
+#### Índices recomendados:
+- `idx_session_photos_session_id` (`session_id`)
+- `idx_session_photos_status` (`status`)
+- `idx_session_photos_expires_at` (`expires_at`)
+- `idx_session_photos_is_purchased` (`is_purchased`)
 
 ### Tabela: `system_settings`
 - `id` (varchar, NO NULL, Default: `'default'`) - **PK**

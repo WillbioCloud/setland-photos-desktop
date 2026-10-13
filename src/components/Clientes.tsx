@@ -322,7 +322,7 @@ export default function Clientes() {
     const toastId = toast.loading('Preparando o link da vitrine online...');
     const result = await dispatchWhatsAppMessage({
       phone: client.phone,
-      message: buildOnlineStoreMessage(client.name, shopUrl),
+      message: buildOnlineStoreMessage(client.name, shopUrl, client.cpf),
       clientName: client.name,
       clientCpf: client.cpf,
       source: 'desktop_link_compra_online',

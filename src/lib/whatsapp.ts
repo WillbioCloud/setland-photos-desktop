@@ -10,7 +10,7 @@ import { supabase } from '@/lib/supabaseClient';
  */
 
 /** Vitrine online onde o cliente escolhe e compra as fotos (PIX / Cartão). */
-export const ONLINE_SHOP_BASE_URL = 'https://setland.com.br/fotos/selecao';
+export const ONLINE_SHOP_BASE_URL = 'https://setland-fotos.vercel.app';
 
 export interface WhatsAppDispatchParams {
   phone?: string | null;
@@ -48,8 +48,9 @@ export function buildWhatsAppDeepLink(phone: string | null | undefined, message:
 }
 
 /** Link da vitrine online vinculado à sessão do cliente (compra por PIX/Cartão). */
-export function getOnlineShopUrl(sessionId: string | number): string {
-  return `${ONLINE_SHOP_BASE_URL}?sessao=${encodeURIComponent(String(sessionId))}`;
+export function getOnlineShopUrl(_sessionId?: string): string {
+  // Aponta para o portal em produção na Vercel
+  return 'https://setland-fotos.vercel.app';
 }
 
 export function getFirstName(fullName?: string | null): string {
@@ -71,16 +72,27 @@ export function buildDriveDownloadMessage(clientName: string | undefined, driveL
 }
 
 /** Mensagem convidando o cliente a escolher e comprar as fotos pela vitrine online. */
-export function buildOnlineStoreMessage(clientName: string | undefined, shopUrl: string): string {
-  return [
-    `Olá, ${getFirstName(clientName)}! ✨`,
-    '',
-    'Suas fotos da Setland já estão disponíveis na vitrine online!',
-    'Acesse o link abaixo para escolher suas favoritas e finalizar a compra com PIX ou Cartão de Crédito:',
-    shopUrl,
-    '',
-    'É rápido: seleciona as fotos, escolhe o formato (impressa e/ou digital) e paga pelo site. 📷',
-  ].join('\n');
+export function buildOnlineStoreMessage(
+  clientName: string,
+  shopUrl: string,
+  clientCpf?: string
+): string {
+  const firstName = (clientName || 'Visitante').trim().split(' ')[0];
+  const rawCpf = (clientCpf || '').trim();
+  const isRealCpf = rawCpf && !rawCpf.startsWith('AUTO_');
+
+  const cpfInstruction = isRealCpf
+    ? `🔑 *Para acessar suas fotos:* Digite seu CPF cadastrado: *${rawCpf}*`
+    : `🔑 *Para acessar suas fotos:* Digite o seu CPF cadastrado no momento da visita.`;
+
+  return (
+    `🏰 Olá, ${firstName}! Você saiu do Castelo Setland sem ver suas fotos?\n\n` +
+    `Não se preocupe! As lembranças da sua aventura estão guardadas com segurança em nosso reino. 📸✨\n\n` +
+    `Acesse o portal abaixo para ver sua galeria e escolher suas fotos favoritas:\n` +
+    `👉 ${shopUrl}\n\n` +
+    `${cpfInstruction}\n\n` +
+    `⏳ _Atenção: Suas fotos possuem prazo de validade antes da exclusão automática do servidor!_`
+  );
 }
 
 /** Abre o link no navegador/app padrão do Windows (Electron) com fallback para o navegador web. */
