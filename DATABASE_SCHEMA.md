@@ -113,6 +113,26 @@ Tabelas públicas encontradas no banco atualizado:
 
 ---
 
+## Colunas Opcionais de `session_photos` (usadas pela UI de Clientes)
+
+O modal de perfil do cliente (`ClientProfileModal`) e a listagem de Clientes leem **quando existirem**
+as colunas:
+
+- `expires_at` (timestamptz) — data-limite da exclusão física da foto (selo de contagem regressiva).
+- `is_purchased` (boolean) — marca explícita de foto adquirida (selo verde "Comprada").
+
+O front-end degrada com segurança: se essas colunas não existirem, ele recarrega a consulta sem
+elas e passa a calcular a expiração como `created_at + 30 dias` (mesma janela do robô de limpeza
+de `electron/main.ts`) e a considerar comprada toda foto com `status = 'selected' | 'synced'`.
+
+Migração sugerida, caso as colunas devam ser persistidas:
+
+```sql
+-- Opcional: manter explícito no banco o que hoje é derivado no front-end
+ALTER TABLE session_photos ADD COLUMN IF NOT EXISTS expires_at timestamptz;
+ALTER TABLE session_photos ADD COLUMN IF NOT EXISTS is_purchased boolean NOT NULL DEFAULT false;
+```
+
 ## Notas da Atualização (Auditoria Resolvida)
 
 As discrepâncias mapeadas anteriormente foram **solucionadas** no banco de dados real e o schema foi alinhado ao código do Front-end:

@@ -25,6 +25,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getPrinters: () => ipcRenderer.invoke('printer:getPrinters'),
   printPhotos: (payload: { photos: any[]; printerName?: string }) => ipcRenderer.invoke('printer:printPhotos', payload),
   appendPhotos: (payload: { sessionId: string; filePaths: string[]; clientName?: string }) => ipcRenderer.invoke('photos:appendPhotos', payload),
+  // Abre links de WhatsApp / Drive / vitrine no navegador padrão do sistema operacional
+  openExternal: (url: string) => ipcRenderer.invoke('shell:openExternal', url),
   deleteLocalSessionDir: (localCacheDir: string) => 
     ipcRenderer.invoke('photos:deleteLocalSessionDir', localCacheDir)
 });

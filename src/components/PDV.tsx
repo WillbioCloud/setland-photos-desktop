@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Camera, QrCode, CreditCard, Banknote, ShoppingCart, Trash2, ArrowRight, Check } from 'lucide-react';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import PrintOrderModal from './PrintOrderModal';
@@ -6,6 +6,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { toast } from "sonner";
 import { supabase } from '@/lib/supabaseClient';
 import { calculatePricing, type PackageDef } from '@/lib/pricingEngine';
+import { consumeCartPreset, type CartPresetPayload } from '@/lib/cartBridge';
 
 export default function PDV() {
   const [pendingOrders, setPendingOrders] = useState<any[]>([]);
@@ -15,7 +16,7 @@ export default function PDV() {
   const [isPrintModalOpen, setIsPrintModalOpen] = useState(false);
   const [printModalData, setPrintModalData] = useState<{ clientName: string; photos: any[] }>({ clientName: '', photos: [] });
 
-  const loadData = async () => {
+  const loadData = useCallback(async () => {
     // 1. Busca os pedidos pendentes
     const { data: ordersData } = await supabase.from('orders')
       .select(`
@@ -37,14 +38,106 @@ export default function PDV() {
     // 2. Busca os pacotes para o Motor de Precificação reconstruir o extrato
     const { data: pkgsData } = await supabase.from('packages').select('*').eq('active', true);
     if (pkgsData) setPackages(pkgsData as PackageDef[]);
-  };
+
+    // Devolve a fila já atualizada para quem precisa selecionar o pedido recém-carregado
+    return ordersData || [];
+  }, []);
+
+  /**
+   * Abre o caixa já com a sessão despachada pela aba Clientes (evento global `add-to-cart`).
+   * Se a sessão ainda não tiver pedido pendente, monta o faturamento imediato a partir das
+   * fotos já marcadas para venda no banco (mesma regra do modal de seleção de formatos).
+   */
+  const focusSessionInCart = useCallback(async (payload?: CartPresetPayload | null) => {
+    const orders = await loadData();
+    const sessionId = payload?.sessionId;
+
+    if (!sessionId) return;
+
+    const existingOrder = (orders || []).find((order: any) => order.session_id === sessionId);
+    if (existingOrder) {
+      setActiveOrder(existingOrder);
+      toast.success(`Sessão de ${payload?.clientName || 'cliente'} carregada no caixa.`, {
+        description: 'Confira os itens ao lado e finalize a cobrança.'
+      });
+      return;
+    }
+
+    // Sem pedido pendente: confere se a sessão já possui fotos marcadas para venda
+    const { data: selectedPhotos, error } = await supabase
+      .from('session_photos')
+      .select('id, is_printed')
+      .eq('session_id', sessionId)
+      .eq('status', 'selected');
+
+    if (error) {
+      console.error('[PDV] Erro ao consultar as fotos selecionadas da sessão:', error);
+      toast.error('Não foi possível consultar as fotos selecionadas desta sessão.');
+      return;
+    }
+
+    if (!selectedPhotos || selectedPhotos.length === 0) {
+      toast.warning(`Nenhuma foto marcada para venda na sessão de ${payload?.clientName || 'cliente'}.`, {
+        description: 'Use o Modo Apresentação (aba Clientes) para selecionar as fotos antes de faturar no caixa.'
+      });
+      return;
+    }
+
+    // Reconstrói o pedido com o motor de precificação oficial (combos + avulsas)
+    const printedCount = selectedPhotos.filter((photo: any) => photo.is_printed === true).length;
+    const digitalCount = selectedPhotos.length - printedCount;
+
+    const { data: pkgs } = await supabase.from('packages').select('*').eq('active', true);
+    const pricing = calculatePricing(printedCount, digitalCount, (pkgs || []) as PackageDef[]);
+
+    const { data: newOrder, error: insertErr } = await supabase
+      .from('orders')
+      .insert({
+        session_id: sessionId,
+        total_amount: pricing.totalAmount,
+        status: 'pending',
+        printed_count: printedCount,
+        digital_count: digitalCount
+      })
+      .select(`
+        *,
+        photo_sessions (
+          cover_photo_url,
+          clients ( name, phone, cpf )
+        )
+      `)
+      .single();
+
+    if (insertErr || !newOrder) {
+      console.error('[PDV] Erro ao abrir o pedido para faturamento imediato:', insertErr);
+      toast.error('Não foi possível abrir o pedido para faturamento.');
+      return;
+    }
+
+    setActiveOrder(newOrder);
+    toast.success(`Pedido de ${payload?.clientName || 'cliente'} pronto para cobrança.`, {
+      description: `${printedCount} impressa(s) • ${digitalCount} digital(is)`
+    });
+
+    await loadData();
+  }, [loadData]);
 
   useEffect(() => {
-    loadData();
-    const handleAddToCart = () => loadData();
+    const handleAddToCart = (event: Event) => {
+      const detail = (event as CustomEvent).detail as CartPresetPayload | undefined;
+      const payload = consumeCartPreset() || detail || null;
+      void focusSessionInCart(payload);
+    };
+
     window.addEventListener('add-to-cart', handleAddToCart);
+
+    // O PDV é montado sob demanda pelo App: recupera o pedido disparado enquanto ele não existia.
+    const pendingPreset = consumeCartPreset();
+    if (pendingPreset) void focusSessionInCart(pendingPreset);
+    else void loadData();
+
     return () => window.removeEventListener('add-to-cart', handleAddToCart);
-  }, []);
+  }, [focusSessionInCart, loadData]);
 
   // Extrai o extrato financeiro inteligente do pedido ativo
   const pricingDetail = activeOrder ? calculatePricing(activeOrder.printed_count, activeOrder.digital_count, packages) : null;
