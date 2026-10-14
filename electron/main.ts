@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog, shell } from 'electron';
+﻿import { app, BrowserWindow, ipcMain, dialog, shell } from 'electron';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
@@ -38,10 +38,16 @@ function createWindow() {
       height: 38
     },
     webPreferences: {
-      preload: path.join(__dirname, 'preload.mjs'),
+      preload: fs.existsSync(path.join(__dirname, 'preload.cjs'))
+        ? path.join(__dirname, 'preload.cjs')
+        : path.join(__dirname, 'preload.js'),
       sandbox: false,
       webSecurity: false
     }
+  });
+
+  mainWindow.webContents.on('preload-error', (_event, preloadPath, error) => {
+    console.error('[Preload Error] Falha ao carregar preload (' + preloadPath + '):', error);
   });
 
   // 2. Resolve automaticamente a porta (5173, 5174, etc)
@@ -241,7 +247,7 @@ app.whenReady().then(() => {
     if (!mainWindow) return null;
     const { canceled, filePaths } = await dialog.showOpenDialog(mainWindow, {
       properties: ['openFile', 'multiSelections'],
-      filters: [{ name: 'Images', extensions: ['jpg', 'png', 'jpeg'] }]
+      filters: [{ name: 'Imagens (JPG, PNG, WebP)', extensions: ['jpg', 'jpeg', 'png', 'webp', 'JPG', 'JPEG', 'PNG', 'WEBP'] }, { name: 'Todos os Arquivos', extensions: ['*'] }]
     });
     return canceled ? null : filePaths;
   });
@@ -319,7 +325,7 @@ app.whenReady().then(() => {
       if (photogErr) console.error('Erro ao buscar funcionário:', photogErr);
       const photographerId = photographerData ? photographerData.id : null;
 
-      // Inserção da sessão com vínculo de cliente e funcionário
+      // Inserção da sessão com vínculo estrito ao schema do banco
       const { data: sessionData, error: sessionErr } = await supabase
         .from('photo_sessions')
         .insert({
@@ -333,14 +339,16 @@ app.whenReady().then(() => {
         .select('id, access_token')
         .single();
 
-      if (sessionErr) {
-        console.error('ERRO CRÍTICO AO CRIAR SESSÃO NO SUPABASE:', sessionErr);
-      } else if (sessionData) {
-        sessionId = sessionData.id;
-        accessToken = sessionData.access_token;
+      if (sessionErr || !sessionData) {
+        console.error('[Ingestão] ERRO CRÍTICO AO CRIAR SESSÃO:', sessionErr);
+        throw new Error(`Falha ao registrar sessão no Supabase: ${sessionErr?.message || 'Erro desconhecido'}`);
       }
-    } catch (err) {
-      console.error('Falha geral no processo de sessão:', err);
+
+      sessionId = sessionData.id;
+      accessToken = sessionData.access_token;
+    } catch (err: any) {
+      console.error('[Ingestão] Falha geral no processo:', err);
+      throw err;
     }
 
     let processedCount = 0;

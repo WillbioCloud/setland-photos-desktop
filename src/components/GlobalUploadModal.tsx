@@ -77,8 +77,7 @@ export default function GlobalUploadModal({ isOpen, onClose, onSessionCreated }:
           setSelectedFiles(paths);
         }
       } else {
-        // Fallback web temporário
-        setSelectedFiles(['foto1.jpg', 'foto2.jpg', 'foto3.png']);
+        toast.error("O seletor de arquivos requer o aplicativo desktop do Electron.");
       }
     } catch (error) {
       console.error("Erro ao selecionar arquivos:", error);
@@ -103,25 +102,26 @@ export default function GlobalUploadModal({ isOpen, onClose, onSessionCreated }:
     setIsUploading(true);
     setUploadProgress(0);
 
-    const randomCover = selectedFiles[Math.floor(Math.random() * selectedFiles.length)];
+    const randomCover = selectedFiles.length > 0
+      ? selectedFiles[Math.floor(Math.random() * selectedFiles.length)]
+      : null;
 
     try {
-      let result = null;
-      if (window.electronAPI && window.electronAPI.processAndUpload) {
-        result = await window.electronAPI.processAndUpload({
-          filePaths: selectedFiles,
-          coverPhoto: randomCover,
-          clientCpf,
-          clientName,
-          clientPhone,
-          photographer
-        });
-      } else {
-        // Simulador de progresso fluido caso o App não esteja no electron para testar UI
-        for (let i = 0; i <= 100; i += 5) {
-          setUploadProgress(i);
-          await new Promise(r => setTimeout(r, 150));
-        }
+      if (!window.electronAPI || !window.electronAPI.processAndUpload) {
+        throw new Error("Ambiente desktop do Electron não detectado. A importação com marca d'água requer o app instalado.");
+      }
+
+      const result = await window.electronAPI.processAndUpload({
+        filePaths: selectedFiles,
+        coverPhoto: randomCover,
+        clientCpf,
+        clientName,
+        clientPhone,
+        photographer
+      });
+
+      if (!result || !result.sessionId) {
+        throw new Error("Falha ao registrar a sessão no sistema.");
       }
 
       const newSession = {
@@ -132,7 +132,7 @@ export default function GlobalUploadModal({ isOpen, onClose, onSessionCreated }:
         date: new Date().toLocaleString('pt-BR'),
         status: 'Pendente',
         driveStatus: result && result.accessToken ? 'synced' : 'pending',
-        avatar: randomCover ? 'file:///' + randomCover.replace(/\\/g, '/') : null,
+        avatar: randomCover ? (randomCover.startsWith('http') ? randomCover : 'file:///' + randomCover.replace(/\\/g, '/')) : null,
         photos: result && result.processedPhotos ? result.processedPhotos : []
       };
 
@@ -140,10 +140,12 @@ export default function GlobalUploadModal({ isOpen, onClose, onSessionCreated }:
         onSessionCreated(newSession);
       }
       window.dispatchEvent(new CustomEvent('session-created', { detail: newSession }));
+      window.dispatchEvent(new CustomEvent('session-updated'));
+      toast.success(`Cliente ${clientName} cadastrado com sucesso!`);
 
-    } catch (error) {
+    } catch (error: any) {
       console.error("Erro no processamento:", error);
-      toast.error("Ocorreu um erro durante o upload.");
+      toast.error(error?.message || "Ocorreu um erro durante o upload.");
     } finally {
       setIsUploading(false);
       onClose();

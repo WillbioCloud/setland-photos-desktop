@@ -153,7 +153,7 @@ export default function ClientProfileModal({ isOpen, onClose, client }: ClientPr
     try {
       // @ts-ignore
       if (!window.electronAPI || !window.electronAPI.selectFiles) {
-        toast.error("Seleção de arquivos indisponível no ambiente web.");
+        toast.error("A adição de novas fotos com marca d'água requer o aplicativo desktop.");
         return;
       }
 

@@ -12,8 +12,18 @@ export default defineConfig({
         entry: 'electron/main.ts',
       },
       preload: {
-        // Arquivo de ponte de segurança
+        // Arquivo de ponte de seguranca compilado como CJS para execucao direta no Electron
         input: 'electron/preload.ts',
+        vite: {
+          build: {
+            rollupOptions: {
+              output: {
+                format: 'cjs',
+                entryFileNames: '[name].cjs',
+              },
+            },
+          },
+        },
       },
     }),
   ],

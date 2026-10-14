@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Search, Filter, MessageCircle, ShoppingCart, Cloud, CloudDrizzle, CloudOff, SearchX, Check, Database, ChevronDown, Download, Store } from 'lucide-react';
+import { Search, Filter, MessageCircle, ShoppingCart, Cloud, CloudDrizzle, CloudOff, SearchX, Check, Database, ChevronDown, Download, Store, Camera, Send, Sparkles } from 'lucide-react';
 import { toast } from 'sonner';
 import DriveSyncModal from './DriveSyncModal';
 import { Card, CardHeader, CardContent } from '@/components/ui/card';
@@ -71,7 +71,7 @@ export default function Clientes() {
      * Monta a consulta de sessões. A lista de fotos traz `expires_at` e `is_purchased`
      * (regras de expiração e de compra) — sem nenhum `limit` imposto pelo front.
      */
-    const buildSessionsQuery = (photoColumns: string, includeSessionExpiry: boolean) => {
+    const buildSessionsQuery = (photoColumns: string, includeSessionExpiry: boolean, includeEmployees: boolean = true) => {
       const sessionColumns = [
         'id',
         'created_at',
@@ -80,31 +80,45 @@ export default function Clientes() {
         'drive_folder_id',
         'cover_photo_url',
         'local_cache_dir',
+        'client_name',
+        'client_cpf',
+        'client_phone',
+        'photographer_name',
       ];
       if (includeSessionExpiry) sessionColumns.push('expires_at');
 
+      const selectClause = `
+        ${sessionColumns.join(', ')},
+        clients ( id, name, phone, cpf ),
+        ${includeEmployees ? 'employees ( id, name, avatar_url ),' : ''}
+        session_photos ( ${photoColumns} )
+      `;
+
       return supabase
         .from('photo_sessions')
-        .select(`
-          ${sessionColumns.join(', ')},
-          clients ( id, name, phone, cpf ),
-          employees ( id, name, avatar_url ),
-          session_photos ( ${photoColumns} )
-        `)
+        .select(selectClause)
         .order('created_at', { ascending: false });
     };
 
     const [ { data, error }, { data: onlineOrders } ] = await Promise.all([
-      // Consulta completa + degradação graciosa caso o banco ainda não tenha as colunas extras.
+      // Consulta com fallback automático se a tabela employees tiver restrição de permissão RLS (42501)
       (async () => {
-        const fullResult = await buildSessionsQuery(SESSION_PHOTO_SELECT, true);
+        let fullResult = await buildSessionsQuery(SESSION_PHOTO_SELECT, true, true);
+        if (fullResult.error && (fullResult.error.code === '42501' || fullResult.error.message?.includes('employees'))) {
+          console.warn('[Clientes] Sem permissão em employees. Executando query sem join de employees.');
+          fullResult = await buildSessionsQuery(SESSION_PHOTO_SELECT, true, false);
+        }
         if (!fullResult.error || !isMissingColumnError(fullResult.error)) return fullResult;
 
         console.warn(
-          '[Clientes] Colunas opcionais ausentes em session_photos. Recarregando com a consulta de compatibilidade.',
+          '[Clientes] Colunas opcionais ausentes em session_photos. Recarregando com consulta de compatibilidade.',
           fullResult.error.message
         );
-        return buildSessionsQuery(SESSION_PHOTO_SELECT_SAFE, false);
+        let safeResult = await buildSessionsQuery(SESSION_PHOTO_SELECT_SAFE, false, true);
+        if (safeResult.error && (safeResult.error.code === '42501' || safeResult.error.message?.includes('employees'))) {
+          safeResult = await buildSessionsQuery(SESSION_PHOTO_SELECT_SAFE, false, false);
+        }
+        return safeResult;
       })(),
       supabase.from('online_orders').select('client_id').in('payment_status', ['paid', 'delivered'])
     ]);
@@ -153,10 +167,10 @@ export default function Clientes() {
         return {
           id: item.id,
           clientId: item.clients?.id,
-          name: item.clients?.name || 'Cliente Desconhecido',
-          phone: item.clients?.phone || '',
-          cpf: item.clients?.cpf || '',
-          photographer: item.employees?.name || 'Não atribuído',
+          name: item.clients?.name || item.client_name || 'Cliente Desconhecido',
+          phone: item.clients?.phone || item.client_phone || '',
+          cpf: item.clients?.cpf || item.client_cpf || '',
+          photographer: item.employees?.name || item.photographer_name || 'Não atribuído',
           date: new Date(item.created_at).toLocaleString('pt-BR'),
           createdAt: item.created_at,
           expiresAt: item.expires_at || null,
@@ -174,18 +188,40 @@ export default function Clientes() {
   }
   
   const filterRef = useRef<HTMLDivElement>(null);
+  const unconvertedRef = useRef<HTMLDivElement>(null);
+  const [isUnconvertedOpen, setIsUnconvertedOpen] = useState(false);
+
+  // Lista e contagem de clientes com status pendente
+  const unconvertedClients = React.useMemo(() => {
+    return clientsList.filter(
+      (c) => c.status === 'Pendente' || c.status?.toLowerCase() === 'pendente' || c.status?.toLowerCase() === 'pending'
+    );
+  }, [clientsList]);
 
   const filters = ['Todos', 'Pendentes', 'Convertidos', 'Abandonados'];
 
-  // Fecha o dropdown ao clicar fora
+  // Fecha os dropdowns e popovers ao clicar fora ou na tecla Esc
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
       if (filterRef.current && !filterRef.current.contains(event.target as Node)) {
         setIsFilterOpen(false);
       }
+      if (unconvertedRef.current && !unconvertedRef.current.contains(event.target as Node)) {
+        setIsUnconvertedOpen(false);
+      }
+    }
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape') {
+        setIsFilterOpen(false);
+        setIsUnconvertedOpen(false);
+      }
     }
     document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+      window.removeEventListener("keydown", handleKeyDown);
+    };
   }, []);
 
   const getStatusBadge = (status: string) => {
@@ -392,8 +428,111 @@ export default function Clientes() {
         </div>
         
         <div className="flex items-center gap-3">
+          {/* Botão de Câmera com Feedback Numérico e Balão Suspenso */}
+          <div className="relative" ref={unconvertedRef}>
+            <button
+              onClick={() => setIsUnconvertedOpen(!isUnconvertedOpen)}
+              className={`relative flex items-center justify-center p-2.5 rounded-full transition-lux bg-background dark:bg-white/[0.05] border shadow-sm active:scale-95 ${
+                isUnconvertedOpen
+                  ? 'border-primary ring-2 ring-primary/30 text-primary'
+                  : 'border-input dark:border-white/10 text-foreground hover:bg-muted dark:hover:bg-white/[0.10]'
+              }`}
+              title="Clientes com status pendente"
+              aria-label="Clientes com status pendente"
+            >
+              <Camera className="h-5 w-5"/>
+              {unconvertedClients.length > 0 && (
+                <span className="absolute -top-1.5 -right-1.5 min-w-[20px] h-5 px-1.5 bg-primary text-primary-foreground text-[11px] font-bold rounded-full flex items-center justify-center shadow-md animate-in zoom-in-75 duration-200 tabular-figures">
+                  {unconvertedClients.length}
+                </span>
+              )}
+            </button>
+
+            {/* Balão Suspenso (Popover de Recuperação de Vendas) */}
+            {isUnconvertedOpen && (
+              <div className="absolute left-0 sm:left-auto sm:right-0 mt-3 w-80 sm:w-96 bg-card dark:bg-[#1A0B18]/95 dark:backdrop-blur-2xl border border-border dark:border-white/10 rounded-2xl shadow-2xl dark:shadow-black/70 lux-card z-50 overflow-hidden animate-in fade-in slide-in-from-top-2 duration-200">
+                {/* Cabeçalho do Balão */}
+                <div className="px-4 py-3 bg-muted/40 dark:bg-white/[0.03] border-b border-border-dashed flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Sparkles className="h-4 w-4 text-primary"/>
+                    <span className="text-xs font-bold uppercase tracking-wider text-foreground">
+                      Clientes Pendentes
+                    </span>
+                  </div>
+                  <span className="text-[11px] font-medium text-muted-foreground font-mono bg-background dark:bg-white/[0.06] px-2 py-0.5 rounded-full border border-border/50">
+                    {unconvertedClients.length} lead{unconvertedClients.length !== 1 ? 's' : ''}
+                  </span>
+                </div>
+
+                {/* Lista de Clientes com Fotos Pendentes */}
+                <div className="max-h-80 overflow-y-auto no-scrollbar divide-y divide-border-dashed dark:divide-white/[0.06]">
+                  {unconvertedClients.length > 0 ? (
+                    unconvertedClients.map((client) => (
+                      <div
+                        key={client.id}
+                        className="p-3.5 flex items-center justify-between gap-3 hover:bg-muted/40 dark:hover:bg-white/[0.04] transition-colors"
+                      >
+                        <div
+                          className="flex items-center gap-3 min-w-0 cursor-pointer flex-1"
+                          onClick={() => {
+                            setSelectedClientId(client.id);
+                            setIsUnconvertedOpen(false);
+                          }}
+                        >
+                          <div className="w-9 h-9 rounded-full bg-primary/10 text-primary flex items-center justify-center font-bold text-xs shrink-0 border border-primary/20 overflow-hidden">
+                            {client.avatar ? (
+                              <img src={client.avatar} alt={client.name} className="w-full h-full object-cover" />
+                            ) : (
+                              getInitials(client.name)
+                            )}
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <p className="text-sm font-semibold text-foreground truncate leading-tight">
+                              {client.name}
+                            </p>
+                            <div className="flex items-center gap-2 mt-0.5">
+                              <span className="text-[11px] text-muted-foreground font-mono truncate">
+                                {client.phone || 'S/ Telefone'}
+                              </span>
+                              <span className="text-[10px] px-1.5 py-0.2 bg-primary/10 text-primary rounded font-medium shrink-0">
+                                {client.pendingPhotosCount || client.photos?.length || 0} fotos
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Botão de Disparo do Link de Compra Online */}
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleSendOnlineShopLink(client);
+                          }}
+                          disabled={!client.phone}
+                          className={`p-2 rounded-xl transition-lux flex items-center justify-center shrink-0 border shadow-sm active:scale-95 ${
+                            client.phone
+                              ? 'bg-primary/10 hover:bg-primary text-primary hover:text-primary-foreground border-primary/20 hover:border-primary'
+                              : 'bg-muted/40 text-muted-foreground/30 border-transparent cursor-not-allowed'
+                          }`}
+                          title={client.phone ? 'Enviar link de compra online no WhatsApp' : 'Cliente sem telefone'}
+                        >
+                          <Send className="h-4 w-4"/>
+                        </button>
+                      </div>
+                    ))
+                  ) : (
+                    <div className="py-8 px-4 text-center">
+                      <p className="text-xs text-muted-foreground">
+                        Nenhum cliente com status pendente! 🎉
+                      </p>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+
           <div className="relative">
-            <Search className="absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+            <Search className="absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground"/>
             <input
               type="text"
               placeholder="Buscar cliente..."
