@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Search, Filter, MessageCircle, ShoppingCart, Cloud, CloudDrizzle, CloudOff, SearchX, Check, Database, ChevronDown, Download, Store, Camera, Send, Sparkles } from 'lucide-react';
+import { Search, Filter, MessageCircle, ShoppingCart, Cloud, CloudDrizzle, CloudOff, SearchX, Check, Database, ChevronDown, Download, Store, Camera, Send, Sparkles, LayoutList, LayoutGrid, User, Calendar, Image as ImageIcon } from 'lucide-react';
 import { toast } from 'sonner';
 import DriveSyncModal from './DriveSyncModal';
 import { Card, CardHeader, CardContent } from '@/components/ui/card';
@@ -32,6 +32,7 @@ export default function Clientes() {
   const [selectedClientId, setSelectedClientId] = useState<string | null>(null);
   const [isFilterOpen, setIsFilterOpen] = useState(false);
   const [syncModalClient, setSyncModalClient] = useState<any>(null);
+  const [viewMode, setViewMode] = useState<'table' | 'grid'>('table');
   
   const handleAddSession = (newSession: any) => {
     setClientsList(prev => [newSession, ...prev]);
@@ -389,13 +390,6 @@ export default function Clientes() {
       return;
     }
 
-    if (pendingPhotos.length === 0) {
-      toast.info('Todas as fotos desta sessão já estão pagas e liberadas.', {
-        description: 'Não há itens pendentes para faturar no caixa.'
-      });
-      return;
-    }
-
     const payload: CartPresetPayload = {
       source: 'clientes',
       sessionId: client.id,
@@ -406,7 +400,7 @@ export default function Clientes() {
       status: client.status,
       driveFolderId: client.driveFolderId || null,
       photos,
-      pendingPhotos
+      pendingPhotos: pendingPhotos.length > 0 ? pendingPhotos : photos
     };
 
     // Publica o payload para o PDV (que é montado sob demanda) e mantém o evento global existente.
@@ -414,7 +408,9 @@ export default function Clientes() {
     window.dispatchEvent(new CustomEvent('add-to-cart', { detail: payload }));
 
     toast.success(`Abrindo o caixa com a sessão de ${client.name}...`, {
-      description: `${pendingPhotos.length} foto(s) aguardando faturamento.`
+      description: pendingPhotos.length > 0 
+        ? `${pendingPhotos.length} foto(s) pendente(s) carregada(s).`
+        : `${photos.length} foto(s) da sessão carregada(s) para venda/reimpressão.`
     });
   };
 
@@ -574,6 +570,34 @@ export default function Clientes() {
               </div>
             )}
           </div>
+
+          {/* Seletor de Modo de Visualização (Tabela clássica vs Grade de Cards moderna) */}
+          <div className="flex items-center bg-background dark:bg-white/[0.05] border border-input dark:border-white/10 rounded-full p-1 shadow-sm">
+            <button
+              onClick={() => setViewMode('table')}
+              className={`p-1.5 rounded-full transition-lux ${
+                viewMode === 'table'
+                  ? 'bg-primary text-primary-foreground shadow-sm'
+                  : 'text-muted-foreground hover:text-foreground'
+              }`}
+              title="Visualização em Lista / Tabela (Clássico)"
+              aria-label="Visualização em Tabela"
+            >
+              <LayoutList className="h-4 w-4" />
+            </button>
+            <button
+              onClick={() => setViewMode('grid')}
+              className={`p-1.5 rounded-full transition-lux ${
+                viewMode === 'grid'
+                  ? 'bg-primary text-primary-foreground shadow-sm'
+                  : 'text-muted-foreground hover:text-foreground'
+              }`}
+              title="Visualização em Grade / Cards (Moderno)"
+              aria-label="Visualização em Grade"
+            >
+              <LayoutGrid className="h-4 w-4" />
+            </button>
+          </div>
         </div>
       </div>
 
@@ -581,102 +605,203 @@ export default function Clientes() {
       <Card className="shadow-sm overflow-hidden flex flex-col h-[calc(100vh-220px)] min-h-[480px]">
         {filteredClients.length > 0 ? (
           <CardContent className="p-0 flex-1 flex flex-col min-h-0 overflow-hidden">
-            <div className="flex-1 overflow-y-auto no-scrollbar [&_[data-slot=table-container]]:overflow-visible">
-              <Table>
-                <TableHeader className="sticky top-0 z-10 bg-card shadow-sm">
-                  <TableRow className="bg-muted/50 border-b-border-dashed">
-                    <TableHead className="px-8 py-5">Cliente</TableHead>
-                    <TableHead className="px-8 py-5">Fotógrafo</TableHead>
-                    <TableHead className="px-8 py-5">Data / Nuvem</TableHead>
-                    <TableHead className="px-8 py-5">Status</TableHead>
-                    <TableHead className="px-8 py-5 text-right">Ações</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
+            {viewMode === 'table' ? (
+              <div className="flex-1 overflow-y-auto no-scrollbar [&_[data-slot=table-container]]:overflow-visible">
+                <Table>
+                  <TableHeader className="sticky top-0 z-10 bg-card shadow-sm">
+                    <TableRow className="bg-muted/50 border-b-border-dashed">
+                      <TableHead className="px-8 py-5">Cliente</TableHead>
+                      <TableHead className="px-8 py-5">Fotógrafo</TableHead>
+                      <TableHead className="px-8 py-5">Data / Nuvem</TableHead>
+                      <TableHead className="px-8 py-5">Status</TableHead>
+                      <TableHead className="px-8 py-5 text-right">Ações</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {filteredClients.map((client) => (
+                      <TableRow
+                        key={client.id}
+                        onClick={() => setSelectedClientId(client.id)}
+                        className="border-b-border-dashed dark:border-white/[0.06] cursor-pointer group hover:bg-muted/30 dark:hover:bg-white/[0.05] transition-colors duration-150 ease-out"
+                      >
+                        <TableCell className="px-8 py-5">
+                          <div className="flex items-center gap-4">
+                            <div className="w-10 h-10 rounded-full bg-primary/10 text-primary flex items-center justify-center font-bold text-sm shrink-0 border border-primary/20 ring-2 ring-primary/10 group-hover:ring-primary/40 group-hover:bg-primary group-hover:text-primary-foreground shadow-sm transition-all duration-150 ease-out overflow-hidden">
+                              {client.avatar ? (
+                                <img src={client.avatar} alt={client.name} className="w-full h-full object-cover" />
+                              ) : (
+                                getInitials(client.name)
+                              )}
+                            </div>
+                            <div>
+                              <p className="font-medium text-foreground leading-tight">{client.name}</p>
+                              <p className="text-xs text-muted-foreground font-mono mt-0.5">{client.phone || 'S/ Contato'}</p>
+                            </div>
+                          </div>
+                        </TableCell>
+                        <TableCell className="px-8 py-5">{client.photographer}</TableCell>
+                        <TableCell className="px-8 py-5">
+                          <div className="flex items-center gap-2.5">
+                            <span className="font-mono tabular-figures text-xs text-muted-foreground">{client.date}</span>
+                            <button
+                              onClick={(e) => { e.stopPropagation(); setSyncModalClient(client); }}
+                              className="p-1.5 rounded-full bg-muted/50 dark:bg-white/[0.06] hover:bg-muted dark:hover:bg-white/[0.12] transition-lux flex items-center justify-center border border-border/60 dark:border-white/10 shadow-sm active:scale-95"
+                              title={
+                                !['PDV', 'Site'].includes(client.status) ? "Miniaturas salvas. Aguardando pagamento." :
+                                client.driveStatus === 'synced' ? "Upload para o Drive concluído com sucesso!" :
+                                client.driveStatus === 'error' ? "Erro crônico no upload para o Drive." :
+                                "Enviando fotos para o Drive em background..."
+                              }
+                            >
+                              {!['PDV', 'Site'].includes(client.status) ? (
+                                <Database className="h-4 w-4 text-muted-foreground" />
+                              ) : client.driveStatus === 'synced' ? (
+                                <Cloud className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
+                              ) : client.driveStatus === 'error' ? (
+                                <CloudOff className="h-4 w-4 text-destructive" />
+                              ) : (
+                                <CloudDrizzle className="h-4 w-4 text-primary animate-pulse" />
+                              )}
+                            </button>
+                          </div>
+                        </TableCell>
+                        <TableCell className="px-8 py-5">{getStatusBadge(client.status)}</TableCell>
+                        <TableCell className="px-8 py-5">
+                          <div className="flex items-center justify-end gap-2">
+                            {/* Botão de WhatsApp (dropdown de ações de mensagem) */}
+                            <button
+                              onClick={(e) => toggleWhatsAppMenu(e, client)}
+                              className={`flex items-center gap-1 p-2.5 rounded-full transition-lux bg-card dark:bg-white/[0.06] shadow-sm hover:bg-muted dark:hover:bg-white/[0.12] border active:scale-95
+                                ${client.phone
+                                  ? `text-primary border-border dark:border-white/10 ${whatsappMenu?.client?.id === client.id ? 'ring-2 ring-primary/40 bg-muted dark:bg-white/[0.12]' : ''}`
+                                  : 'text-muted-foreground/30 cursor-not-allowed border-border dark:border-white/10'
+                                }
+                              `}
+                              title={client.phone ? "Ações de WhatsApp" : "Sem telefone cadastrado"}
+                              disabled={!client.phone}
+                              aria-haspopup="menu"
+                              aria-expanded={whatsappMenu?.client?.id === client.id}
+                            >
+                              <MessageCircle className="h-4 w-4" />
+                              <ChevronDown className={`h-3 w-3 transition-transform duration-200 ${whatsappMenu?.client?.id === client.id ? 'rotate-180' : ''}`} />
+                            </button>
+                            {/* Botão de PDV: abre o caixa já com a sessão deste cliente carregada */}
+                            <button 
+                              onClick={(e) => { e.stopPropagation(); handleOpenCart(client); }}
+                              className="p-2.5 rounded-full text-foreground hover:bg-muted transition-colors bg-card shadow-sm border border-border ml-2 active:scale-95"
+                              title={client.pendingPhotosCount > 0
+                                ? `Faturar ${client.pendingPhotosCount} foto(s) no PDV`
+                                : "Vender (PDV)"}
+                            >
+                              <ShoppingCart className="h-4 w-4" />
+                            </button>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            ) : (
+              /* Visualização em Grade / Cards (Moderno) */
+              <div className="flex-1 overflow-y-auto no-scrollbar p-6">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
                   {filteredClients.map((client) => (
-                    <TableRow
+                    <div
                       key={client.id}
                       onClick={() => setSelectedClientId(client.id)}
-                      className="border-b-border-dashed dark:border-white/[0.06] cursor-pointer group hover:bg-muted/30 dark:hover:bg-white/[0.05] transition-colors duration-150 ease-out"
+                      className="group relative bg-card dark:bg-[#1A0B18]/70 border border-border dark:border-white/10 hover:border-primary/40 rounded-2xl p-4 shadow-sm hover:shadow-md transition-all duration-200 cursor-pointer flex flex-col justify-between"
                     >
-                      <TableCell className="px-8 py-5">
-                        <div className="flex items-center gap-4">
-                          <div className="w-10 h-10 rounded-full bg-primary/10 text-primary flex items-center justify-center font-bold text-sm shrink-0 border border-primary/20 ring-2 ring-primary/10 group-hover:ring-primary/40 group-hover:bg-primary group-hover:text-primary-foreground shadow-sm transition-all duration-150 ease-out overflow-hidden">
-                            {client.avatar ? (
-                              <img src={client.avatar} alt={client.name} className="w-full h-full object-cover" />
-                            ) : (
-                              getInitials(client.name)
-                            )}
+                      <div>
+                        {/* Imagem de Capa da Sessão ou Avatar */}
+                        <div className="relative aspect-[4/3] rounded-xl overflow-hidden bg-muted mb-3 border border-border/50">
+                          {client.avatar ? (
+                            <img
+                              src={client.avatar}
+                              alt={client.name}
+                              className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
+                            />
+                          ) : (
+                            <div className="w-full h-full flex flex-col items-center justify-center bg-primary/10 text-primary">
+                              <span className="text-3xl font-bold">{getInitials(client.name)}</span>
+                            </div>
+                          )}
+                          <div className="absolute top-2 left-2">
+                            {getStatusBadge(client.status)}
                           </div>
-                          <div>
-                            <p className="font-medium text-foreground leading-tight">{client.name}</p>
-                            <p className="text-xs text-muted-foreground font-mono mt-0.5">{client.phone || 'S/ Contato'}</p>
+                          <div className="absolute bottom-2 right-2 px-2 py-0.5 rounded-md bg-black/60 backdrop-blur-sm text-[11px] font-mono text-white/90">
+                            {client.photos?.length || 0} fotos
                           </div>
                         </div>
-                      </TableCell>
-                      <TableCell className="px-8 py-5">{client.photographer}</TableCell>
-                      <TableCell className="px-8 py-5">
-                        <div className="flex items-center gap-2.5">
-                          <span className="font-mono tabular-figures text-xs text-muted-foreground">{client.date}</span>
-                          <button
-                            onClick={(e) => { e.stopPropagation(); setSyncModalClient(client); }}
-                            className="p-1.5 rounded-full bg-muted/50 dark:bg-white/[0.06] hover:bg-muted dark:hover:bg-white/[0.12] transition-lux flex items-center justify-center border border-border/60 dark:border-white/10 shadow-sm active:scale-95"
-                            title={
-                              !['PDV', 'Site'].includes(client.status) ? "Miniaturas salvas. Aguardando pagamento." :
-                              client.driveStatus === 'synced' ? "Upload para o Drive concluído com sucesso!" :
-                              client.driveStatus === 'error' ? "Erro crônico no upload para o Drive." :
-                              "Enviando fotos para o Drive em background..."
-                            }
-                          >
-                            {!['PDV', 'Site'].includes(client.status) ? (
-                              <Database className="h-4 w-4 text-muted-foreground" />
-                            ) : client.driveStatus === 'synced' ? (
-                              <Cloud className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
-                            ) : client.driveStatus === 'error' ? (
-                              <CloudOff className="h-4 w-4 text-destructive" />
-                            ) : (
-                              <CloudDrizzle className="h-4 w-4 text-primary animate-pulse" />
-                            )}
-                          </button>
+
+                        {/* Detalhes do Cliente */}
+                        <h4 className="font-semibold text-foreground text-base truncate group-hover:text-primary transition-colors">
+                          {client.name}
+                        </h4>
+                        <div className="flex items-center gap-2 mt-1.5 text-xs text-muted-foreground font-mono truncate">
+                          <Phone className="h-3.5 w-3.5 shrink-0 text-primary/70" />
+                          <span>{client.phone || 'Sem telefone'}</span>
                         </div>
-                      </TableCell>
-                      <TableCell className="px-8 py-5">{getStatusBadge(client.status)}</TableCell>
-                      <TableCell className="px-8 py-5">
-                        <div className="flex items-center justify-end gap-2">
-                          {/* Botão de WhatsApp (dropdown de ações de mensagem) */}
+                        <div className="flex items-center gap-2 mt-1 text-xs text-muted-foreground truncate">
+                          <User className="h-3.5 w-3.5 shrink-0 text-muted-foreground/70" />
+                          <span>{client.photographer}</span>
+                        </div>
+                        <div className="flex items-center gap-2 mt-1 text-[11px] text-muted-foreground font-mono">
+                          <Calendar className="h-3.5 w-3.5 shrink-0 text-muted-foreground/70" />
+                          <span>{client.date}</span>
+                        </div>
+                      </div>
+
+                      {/* Rodapé do Card com Ações */}
+                      <div className="flex items-center justify-between pt-3 mt-3 border-t border-border-dashed dark:border-white/[0.06]">
+                        {/* Status Nuvem */}
+                        <button
+                          onClick={(e) => { e.stopPropagation(); setSyncModalClient(client); }}
+                          className="p-1.5 rounded-full hover:bg-muted transition-colors flex items-center justify-center"
+                          title="Sincronização Google Drive"
+                        >
+                          {!['PDV', 'Site'].includes(client.status) ? (
+                            <Database className="h-4 w-4 text-muted-foreground" />
+                          ) : client.driveStatus === 'synced' ? (
+                            <Cloud className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
+                          ) : client.driveStatus === 'error' ? (
+                            <CloudOff className="h-4 w-4 text-destructive" />
+                          ) : (
+                            <CloudDrizzle className="h-4 w-4 text-primary animate-pulse" />
+                          )}
+                        </button>
+
+                        <div className="flex items-center gap-1.5">
+                          {/* Botão de WhatsApp */}
                           <button
                             onClick={(e) => toggleWhatsAppMenu(e, client)}
-                            className={`flex items-center gap-1 p-2.5 rounded-full transition-lux bg-card dark:bg-white/[0.06] shadow-sm hover:bg-muted dark:hover:bg-white/[0.12] border active:scale-95
-                              ${client.phone
-                                ? `text-primary border-border dark:border-white/10 ${whatsappMenu?.client?.id === client.id ? 'ring-2 ring-primary/40 bg-muted dark:bg-white/[0.12]' : ''}`
+                            className={`flex items-center gap-1 p-2 rounded-full transition-lux bg-background dark:bg-white/[0.06] shadow-sm hover:bg-muted border active:scale-95 ${
+                              client.phone
+                                ? 'text-primary border-border dark:border-white/10'
                                 : 'text-muted-foreground/30 cursor-not-allowed border-border dark:border-white/10'
-                              }
-                            `}
-                            title={client.phone ? "Ações de WhatsApp" : "Sem telefone cadastrado"}
+                            }`}
+                            title={client.phone ? "Ações de WhatsApp" : "Sem telefone"}
                             disabled={!client.phone}
-                            aria-haspopup="menu"
-                            aria-expanded={whatsappMenu?.client?.id === client.id}
                           >
-                            <MessageCircle className="h-4 w-4" />
-                            <ChevronDown className={`h-3 w-3 transition-transform duration-200 ${whatsappMenu?.client?.id === client.id ? 'rotate-180' : ''}`} />
+                            <MessageCircle className="h-3.5 w-3.5" />
+                            <ChevronDown className="h-3 w-3" />
                           </button>
-                          {/* Botão de PDV: abre o caixa já com a sessão deste cliente carregada */}
-                          <button 
+
+                          {/* Botão de PDV */}
+                          <button
                             onClick={(e) => { e.stopPropagation(); handleOpenCart(client); }}
-                            className="p-2.5 rounded-full text-foreground hover:bg-muted transition-colors bg-card shadow-sm border border-border ml-2 active:scale-95"
-                            title={client.pendingPhotosCount > 0
-                              ? `Faturar ${client.pendingPhotosCount} foto(s) no PDV`
-                              : "Vender (PDV)"}
+                            className="p-2 rounded-full text-foreground hover:bg-muted transition-colors bg-background dark:bg-white/[0.06] shadow-sm border border-border dark:border-white/10 active:scale-95"
+                            title="Vender no PDV"
                           >
-                            <ShoppingCart className="h-4 w-4" />
+                            <ShoppingCart className="h-3.5 w-3.5" />
                           </button>
                         </div>
-                      </TableCell>
-                    </TableRow>
+                      </div>
+                    </div>
                   ))}
-                </TableBody>
-              </Table>
-            </div>
+                </div>
+              </div>
+            )}
             
             {/* Rodapé: Paginação Simulada */}
             <div className="px-8 py-4 bg-muted/30 dark:bg-white/[0.02] border-t border-border-dashed dark:border-white/[0.06] text-xs text-muted-foreground flex justify-between items-center shrink-0">

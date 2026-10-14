@@ -17,41 +17,56 @@ export async function processSingleImage(
   const originalDestPath = path.join(localCacheDir, fileName);
   fs.copyFileSync(inputPath, originalDestPath);
 
-  // 1. Redimensiona a miniatura para padrão vitrine web leve (máx 1280px)
+  // 1. Redimensiona a foto primeiro e extrai as dimensoes reais resultantes
   const { data: baseBuffer, info } = await sharp(inputPath)
-    .resize(1280, 1280, { fit: 'inside', withoutEnlargement: true })
+    .resize(1920, 1080, { fit: 'inside', withoutEnlargement: true })
     .toBuffer({ resolveWithObject: true });
 
   const width = info.width;
+  const height = info.height;
 
-  // 2. Prepara o selo da marca d'água proporcional (~25% da largura da imagem)
-  const watermarkWidth = Math.max(160, Math.min(260, Math.floor(width * 0.25)));
-  
-  // Aplica transparência visível de ~55% (canal alpha 140) com borda preservada
+  // 2. Garante que o bloco da marca d'agua seja menor que a largura e altura da imagem
+  const maxWatermarkDim = Math.min(180, Math.floor(width * 0.25), Math.floor(height * 0.25));
   const singleWatermark = await sharp(watermarkPath)
-    .resize(watermarkWidth, null, { fit: 'inside' })
-    .ensureAlpha()
+    .resize(maxWatermarkDim, maxWatermarkDim, { fit: 'inside' })
     .composite([
       {
-        input: Buffer.from([255, 255, 255, 140]),
+        input: Buffer.from([255, 255, 255, 77]),
         raw: { width: 1, height: 1, channels: 4 },
         tile: true,
         blend: 'dest-in'
       }
     ])
-    .png()
     .toBuffer();
 
-  // 3. Ladrilha o mosaico de marca d'água diretamente sobre a foto inteira
+  // 3. Cria o canvas do tamanho exato da foto reduzida e repete o mosaico
+  const tiledWatermark = await sharp({
+    create: {
+      width: width,
+      height: height,
+      channels: 4,
+      background: { r: 0, g: 0, b: 0, alpha: 0 }
+    }
+  })
+  .composite([
+    {
+      input: singleWatermark,
+      tile: true,
+      blend: 'over'
+    }
+  ])
+  .png()
+  .toBuffer();
+
+  // 4. Sobrepoe o mosaico de dimensoes identicas e gera o WebP final
   const imageBuffer = await sharp(baseBuffer)
     .composite([
       {
-        input: singleWatermark,
-        tile: true,
+        input: tiledWatermark,
         blend: 'over'
       }
     ])
-    .webp({ quality: 72, effort: 4 })
+    .webp({ quality: 75, effort: 4 })
     .toBuffer();
 
   // Salva no cache local temporario

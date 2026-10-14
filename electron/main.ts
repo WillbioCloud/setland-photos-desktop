@@ -1,4 +1,4 @@
-﻿import { app, BrowserWindow, ipcMain, dialog, shell } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, shell } from 'electron';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
@@ -325,12 +325,17 @@ app.whenReady().then(() => {
       if (photogErr) console.error('Erro ao buscar funcionário:', photogErr);
       const photographerId = photographerData ? photographerData.id : null;
 
-      // Inserção da sessão com vínculo estrito ao schema do banco
+      // Inserção da sessão com vínculo estrito ao schema do banco e fallback com dados do cliente
+      const safeCpfVal = clientCpf && clientCpf.trim() !== '' ? clientCpf.trim() : null;
       const { data: sessionData, error: sessionErr } = await supabase
         .from('photo_sessions')
         .insert({
           client_id: clientId,
           photographer_id: photographerId,
+          client_name: clientName,
+          client_cpf: safeCpfVal,
+          client_phone: clientPhone || null,
+          photographer_name: photographer || null,
           status: 'Pendente',
           drive_status: 'pending',
           cover_photo_url: coverPhoto ? `file:///${coverPhoto.replace(/\\/g, '/').replace(/^\/+/, '')}` : null,
@@ -339,16 +344,14 @@ app.whenReady().then(() => {
         .select('id, access_token')
         .single();
 
-      if (sessionErr || !sessionData) {
-        console.error('[Ingestão] ERRO CRÍTICO AO CRIAR SESSÃO:', sessionErr);
-        throw new Error(`Falha ao registrar sessão no Supabase: ${sessionErr?.message || 'Erro desconhecido'}`);
+      if (sessionErr) {
+        console.error('ERRO CRÍTICO AO CRIAR SESSÃO NO SUPABASE:', sessionErr);
+      } else if (sessionData) {
+        sessionId = sessionData.id;
+        accessToken = sessionData.access_token;
       }
-
-      sessionId = sessionData.id;
-      accessToken = sessionData.access_token;
     } catch (err: any) {
-      console.error('[Ingestão] Falha geral no processo:', err);
-      throw err;
+      console.error('Falha geral no processo de sessão (continuando com cache local):', err);
     }
 
     let processedCount = 0;
