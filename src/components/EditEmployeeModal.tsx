@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { ArrowDownLeft, Loader2, Package, Save, UserCheck } from 'lucide-react';
+import { ArrowDownLeft, Loader2, Package, Save, Trash2, UserCheck } from 'lucide-react';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -12,6 +12,7 @@ interface EditEmployeeModalProps {
   onClose: () => void;
   employee: any | null;
   onEmployeeUpdated: () => void;
+  onDeleteRequest?: (employee: any) => void;
 }
 
 export default function EditEmployeeModal({
@@ -19,6 +20,7 @@ export default function EditEmployeeModal({
   onClose,
   employee,
   onEmployeeUpdated,
+  onDeleteRequest,
 }: EditEmployeeModalProps) {
   const [name, setName] = useState('');
   const [role, setRole] = useState('Operador');
@@ -214,7 +216,17 @@ export default function EditEmployeeModal({
               </div>
             )}
 
-            <div className="flex justify-end pt-1">
+            <div className="flex items-center justify-between pt-1">
+              {onDeleteRequest ? (
+                <button
+                  type="button"
+                  onClick={() => onDeleteRequest(employee)}
+                  className="flex items-center gap-1.5 rounded-xl border border-destructive/20 bg-destructive/10 px-3.5 py-2.5 text-xs font-semibold text-destructive transition-all hover:bg-destructive hover:text-white active:scale-95 cursor-pointer"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                  Excluir funcionário
+                </button>
+              ) : <div />}
               <button
                 type="submit"
                 disabled={isSaving}

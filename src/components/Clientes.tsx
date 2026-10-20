@@ -1,8 +1,8 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Search, Filter, MessageCircle, ShoppingCart, Cloud, CloudDrizzle, CloudOff, SearchX, Check, Database, ChevronDown, Download, Store, Camera, Send, Sparkles, LayoutList, LayoutGrid, User, Calendar, Image as ImageIcon } from 'lucide-react';
+import { Search, Filter, MessageCircle, ShoppingCart, Cloud, CloudDrizzle, CloudOff, SearchX, Check, Database, ChevronDown, Download, Store, Camera, Send, Sparkles, LayoutList, LayoutGrid, User, Calendar, Phone } from 'lucide-react';
 import { toast } from 'sonner';
 import DriveSyncModal from './DriveSyncModal';
-import { Card, CardHeader, CardContent } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table';
 import ClientProfileModal from './ClientProfileModal';
 import { supabase } from '@/lib/supabaseClient';

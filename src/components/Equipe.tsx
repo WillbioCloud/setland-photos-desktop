@@ -1,11 +1,13 @@
 import React, { useState } from 'react';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table';
-import { UserPlus, Pencil, Ban, CheckCircle2, Package } from 'lucide-react';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
+import { UserPlus, Pencil, Ban, CheckCircle2, Package, Trash2, Loader2 } from 'lucide-react';
 import EmployeeModal from './EmployeeModal';
 import EditEmployeeModal from './EditEmployeeModal';
 import EquipmentModal from './EquipmentModal';
 import { supabase } from '@/lib/supabaseClient';
+import { toast } from 'sonner';
 
 export type UserRole = 'operador' | 'gerente' | 'dono';
 
@@ -17,6 +19,8 @@ export default function Equipe({ userRole }: EquipeProps) {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isEquipmentModalOpen, setIsEquipmentModalOpen] = useState(false);
   const [editingEmployee, setEditingEmployee] = useState<any | null>(null);
+  const [employeeToDelete, setEmployeeToDelete] = useState<any | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
   const [employeesList, setEmployeesList] = useState<any[]>([]);
 
   const loadEmployees = async () => {
@@ -44,8 +48,52 @@ export default function Equipe({ userRole }: EquipeProps) {
 
   const handleToggleStatus = async (id: string, currentStatus: string) => {
     const novoStatus = currentStatus === 'Ativo' ? 'Inativo' : 'Ativo';
-    await supabase.from('employees').update({ status: novoStatus }).eq('id', id);
-    loadEmployees();
+    try {
+      const { error } = await supabase.from('employees').update({ status: novoStatus }).eq('id', id);
+      if (error) throw error;
+      toast.success(`Status alterado para ${novoStatus}.`);
+      loadEmployees();
+    } catch (error) {
+      console.error('Erro ao atualizar status:', error);
+      toast.error('Erro ao atualizar status do funcionário.');
+    }
+  };
+
+  const handleDeleteEmployee = async () => {
+    if (!employeeToDelete) return;
+
+    setIsDeleting(true);
+    try {
+      // 1. Libera equipamentos que estavam sob posse do funcionário
+      const { error: equipError } = await supabase
+        .from('equipments')
+        .update({ assigned_to: null, status: 'Disponível' })
+        .eq('assigned_to', employeeToDelete.id)
+        .neq('status', 'Manutenção');
+
+      if (equipError) {
+        console.warn('Aviso ao desvincular equipamentos do funcionário excluído:', equipError);
+      }
+
+      // 2. Remove o funcionário do banco de dados
+      const { error } = await supabase
+        .from('employees')
+        .delete()
+        .eq('id', employeeToDelete.id);
+
+      if (error) throw error;
+
+      toast.success(`Funcionário "${employeeToDelete.name}" excluído com sucesso!`);
+      window.dispatchEvent(new CustomEvent('equipment-updated'));
+      window.dispatchEvent(new CustomEvent('employee-deleted'));
+      setEmployeeToDelete(null);
+      await loadEmployees();
+    } catch (error: any) {
+      console.error('Erro ao excluir funcionário:', error);
+      toast.error('Erro ao excluir funcionário. Verifique suas permissões e tente novamente.');
+    } finally {
+      setIsDeleting(false);
+    }
   };
 
   if (userRole === 'operador') {
@@ -129,7 +177,7 @@ export default function Equipe({ userRole }: EquipeProps) {
                     </TableCell>
                     <TableCell className="text-muted-foreground text-sm font-mono">{emp.date}</TableCell>
                     <TableCell className="text-right">
-                      <div className="flex items-center justify-end gap-2">
+                      <div className="flex items-center justify-end gap-1.5">
                         <button
                           type="button"
                           onClick={() => setEditingEmployee(emp)}
@@ -140,14 +188,35 @@ export default function Equipe({ userRole }: EquipeProps) {
                           <Pencil className="h-4 w-4" />
                         </button>
                         {emp.status === 'Ativo' ? (
-                          <button onClick={() => handleToggleStatus(emp.id, emp.status)} className="p-2 text-muted-foreground hover:text-destructive hover:bg-destructive/10 rounded-full transition-colors" title="Bloquear Acesso">
+                          <button
+                            type="button"
+                            onClick={() => handleToggleStatus(emp.id, emp.status)}
+                            className="p-2 text-muted-foreground hover:text-amber-500 hover:bg-amber-500/10 rounded-full transition-colors cursor-pointer"
+                            title="Bloquear Acesso"
+                            aria-label={`Bloquear acesso de ${emp.name}`}
+                          >
                             <Ban className="h-4 w-4" />
                           </button>
                         ) : (
-                          <button onClick={() => handleToggleStatus(emp.id, emp.status)} className="p-2 text-muted-foreground hover:text-emerald-500 hover:bg-emerald-500/10 rounded-full transition-colors" title="Reativar">
+                          <button
+                            type="button"
+                            onClick={() => handleToggleStatus(emp.id, emp.status)}
+                            className="p-2 text-muted-foreground hover:text-emerald-500 hover:bg-emerald-500/10 rounded-full transition-colors cursor-pointer"
+                            title="Reativar Acesso"
+                            aria-label={`Reativar acesso de ${emp.name}`}
+                          >
                             <CheckCircle2 className="h-4 w-4" />
                           </button>
                         )}
+                        <button
+                          type="button"
+                          onClick={() => setEmployeeToDelete(emp)}
+                          className="p-2 text-muted-foreground hover:text-destructive hover:bg-destructive/10 rounded-full transition-colors cursor-pointer"
+                          title="Excluir Funcionário"
+                          aria-label={`Excluir funcionário ${emp.name}`}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
                       </div>
                     </TableCell>
                   </TableRow>
@@ -165,6 +234,10 @@ export default function Equipe({ userRole }: EquipeProps) {
         onClose={() => setEditingEmployee(null)}
         employee={editingEmployee}
         onEmployeeUpdated={loadEmployees}
+        onDeleteRequest={(emp) => {
+          setEditingEmployee(null);
+          setEmployeeToDelete(emp);
+        }}
       />
 
       <EquipmentModal
@@ -172,6 +245,45 @@ export default function Equipe({ userRole }: EquipeProps) {
         onClose={() => setIsEquipmentModalOpen(false)}
         employees={employeesList}
       />
+
+      {/* MODAL DE CONFIRMAÇÃO DE EXCLUSÃO */}
+      <Dialog open={!!employeeToDelete} onOpenChange={(open) => !open && !isDeleting && setEmployeeToDelete(null)}>
+        <DialogContent className="sm:max-w-md border-border bg-brand-surface p-6 shadow-2xl rounded-2xl">
+          <DialogHeader className="gap-3">
+            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-destructive/10 text-destructive border border-destructive/20">
+              <Trash2 className="h-6 w-6" />
+            </div>
+            <div>
+              <DialogTitle className="text-lg font-bold text-foreground">
+                Excluir Funcionário
+              </DialogTitle>
+              <DialogDescription className="mt-2 text-sm text-muted-foreground leading-relaxed">
+                Tem certeza que deseja excluir permanentemente <strong className="text-foreground">{employeeToDelete?.name}</strong> da equipe? 
+                Itens sob sua custódia serão liberados e devolvidos ao armário como disponíveis. Esta ação não poderá ser desfeita.
+              </DialogDescription>
+            </div>
+          </DialogHeader>
+          <DialogFooter className="mt-6 flex-row justify-end gap-2.5">
+            <button
+              type="button"
+              disabled={isDeleting}
+              onClick={() => setEmployeeToDelete(null)}
+              className="px-4 py-2 rounded-xl border border-border bg-card hover:bg-muted text-foreground font-semibold text-sm transition-colors cursor-pointer disabled:opacity-50"
+            >
+              Cancelar
+            </button>
+            <button
+              type="button"
+              disabled={isDeleting}
+              onClick={handleDeleteEmployee}
+              className="flex items-center gap-2 px-4 py-2 rounded-xl bg-destructive hover:bg-destructive/90 text-white font-semibold text-sm shadow-sm transition-all cursor-pointer disabled:opacity-50 active:scale-95"
+            >
+              {isDeleting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+              {isDeleting ? 'Excluindo...' : 'Sim, Excluir'}
+            </button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
