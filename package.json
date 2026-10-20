@@ -70,7 +70,15 @@
       {
         "from": "credentials.json",
         "to": "credentials.json"
+      },
+      {
+        "from": "src/assets/watermark_setland.png",
+        "to": "watermark_setland.png"
       }
+    ],
+    "asarUnpack": [
+      "**/node_modules/sharp/**/*",
+      "**/node_modules/@img/**/*"
     ],
     "win": {
       "target": [

@@ -14,9 +14,9 @@ dotenv.config();
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Configure suas chaves do Supabase aqui
-const SUPABASE_URL = process.env.VITE_SUPABASE_URL || '';
-const SUPABASE_KEY = process.env.VITE_SUPABASE_ANON_KEY || '';
+// Configure suas chaves do Supabase aqui (com fallback para produção empacotada)
+const SUPABASE_URL = process.env.VITE_SUPABASE_URL || 'https://egopjbavxkrrpxxysmck.supabase.co';
+const SUPABASE_KEY = process.env.VITE_SUPABASE_ANON_KEY || 'sb_publishable_h3F7yDPQRlFeVtTGaIP0XA_h57ZtfeA';
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 
 let mainWindow: BrowserWindow | null = null;
@@ -256,7 +256,9 @@ app.whenReady().then(() => {
     const { filePaths, coverPhoto, clientCpf, clientName, clientPhone, photographer } = payload;
 
     // Caminho da marca d'água
-    const watermarkPath = path.join(app.getAppPath(), 'src/assets/watermark_setland.png');
+    const watermarkPath = app.isPackaged
+      ? path.join(process.resourcesPath, 'watermark_setland.png')
+      : path.join(app.getAppPath(), 'src/assets/watermark_setland.png');
 
     const tempOutputDir = path.join(app.getPath('userData'), 'temp_previews');
     if (!fs.existsSync(tempOutputDir)) fs.mkdirSync(tempOutputDir, { recursive: true });
@@ -302,14 +304,15 @@ app.whenReady().then(() => {
           .single();
 
         if (clientErr) {
-          console.error('Erro ao criar cliente:', clientErr);
+          throw new Error(`Falha ao registrar cliente no banco: ${clientErr.message}`);
         } else if (newClient) {
           clientId = newClient.id;
           console.log('Cliente criado com sucesso:', clientId);
         }
       }
-    } catch (err) {
-      console.warn('Erro ao processar cliente (Modo Offline)', err);
+    } catch (err: any) {
+      console.error('[Ingestão] Erro ao processar cliente:', err);
+      throw new Error(err.message || 'Erro ao processar cliente.');
     }
 
     let sessionId = null;
@@ -344,14 +347,15 @@ app.whenReady().then(() => {
         .select('id, access_token')
         .single();
 
-      if (sessionErr) {
-        console.error('ERRO CRÍTICO AO CRIAR SESSÃO NO SUPABASE:', sessionErr);
-      } else if (sessionData) {
-        sessionId = sessionData.id;
-        accessToken = sessionData.access_token;
+      if (sessionErr || !sessionData) {
+        throw new Error(`Falha ao criar sessão de fotos no banco: ${sessionErr?.message || 'Confirmação não recebida'}`);
       }
+
+      sessionId = sessionData.id;
+      accessToken = sessionData.access_token;
     } catch (err: any) {
-      console.error('Falha geral no processo de sessão (continuando com cache local):', err);
+      console.error('[Ingestão] Erro crítico na sessão:', err);
+      throw new Error(err.message || 'Falha ao sincronizar sessão com a nuvem.');
     }
 
     let processedCount = 0;
@@ -624,7 +628,9 @@ app.whenReady().then(() => {
       return { success: false, message: 'Dados insuficientes para ingestão.' };
     }
 
-    const watermarkPath = path.join(app.getAppPath(), 'src/assets/watermark_setland.png');
+    const watermarkPath = app.isPackaged
+      ? path.join(process.resourcesPath, 'watermark_setland.png')
+      : path.join(app.getAppPath(), 'src/assets/watermark_setland.png');
     const tempOutputDir = path.join(app.getPath('userData'), 'temp_previews');
     if (!fs.existsSync(tempOutputDir)) fs.mkdirSync(tempOutputDir, { recursive: true });
 

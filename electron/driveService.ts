@@ -3,29 +3,34 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { app } from 'electron';
 
-// Lê o arquivo JSON com o Client ID, Secret e Refresh Token
-const isDev = !app.isPackaged;
-const CREDENTIALS_PATH = isDev 
-  ? path.join(process.cwd(), 'electron', 'credentials.json') 
-  : path.join(process.resourcesPath, 'credentials.json');
+let driveClient: drive_v3.Drive | null = null;
 
-const creds = JSON.parse(fs.readFileSync(CREDENTIALS_PATH, 'utf-8'));
+function getDriveClient(): drive_v3.Drive {
+  if (driveClient) return driveClient;
 
-// Inicializa o cliente OAuth2 com as credenciais do App
-const oauth2Client = new google.auth.OAuth2(
-  creds.client_id,
-  creds.client_secret,
-  'https://developers.google.com/oauthplayground'
-);
+  const isDev = !app.isPackaged;
+  const CREDENTIALS_PATH = isDev 
+    ? path.join(process.cwd(), 'electron', 'credentials.json') 
+    : path.join(process.resourcesPath, 'credentials.json');
 
-// Injeta o Refresh Token permanente
-oauth2Client.setCredentials({
-  refresh_token: creds.refresh_token
-});
+  if (!fs.existsSync(CREDENTIALS_PATH)) {
+    throw new Error(`Arquivo credentials.json não encontrado em: ${CREDENTIALS_PATH}. Configure as credenciais do Google Drive.`);
+  }
 
-const drive: drive_v3.Drive = google.drive({ version: 'v3', auth: oauth2Client });
+  const creds = JSON.parse(fs.readFileSync(CREDENTIALS_PATH, 'utf-8'));
+  const oauth2Client = new google.auth.OAuth2(
+    creds.client_id,
+    creds.client_secret,
+    'https://developers.google.com/oauthplayground'
+  );
+
+  oauth2Client.setCredentials({ refresh_token: creds.refresh_token });
+  driveClient = google.drive({ version: 'v3', auth: oauth2Client });
+  return driveClient;
+}
 
 export async function createClientFolder(clientName: string, cpf: string, parentFolderId: string): Promise<string> {
+  const drive = getDriveClient();
   const folderName = `${clientName} - ${cpf || 'S/Cpf'}`;
   const fileMetadata = {
     name: folderName,
@@ -33,52 +38,26 @@ export async function createClientFolder(clientName: string, cpf: string, parent
     parents: [parentFolderId]
   };
 
-  try {
-    const response = await drive.files.create({
-      requestBody: fileMetadata,
-      fields: 'id',
-    });
+  const response = await drive.files.create({
+    requestBody: fileMetadata,
+    fields: 'id',
+  });
 
-    if (!response.data.id) {
-      throw new Error('Falha ao obter o ID da pasta após a criação.');
-    }
-
-    return response.data.id;
-  } catch (error) {
-    console.error('Erro ao criar a pasta no Google Drive:', error);
-    throw error;
-  }
+  if (!response.data.id) throw new Error('Falha ao obter o ID da pasta após a criação.');
+  return response.data.id;
 }
 
 export async function uploadPhoto(filePath: string, folderId: string, fileName: string): Promise<string> {
+  const drive = getDriveClient();
   const ext = path.extname(filePath).toLowerCase();
   const mimeType = ext === '.png' ? 'image/png' : 'image/jpeg';
 
-  const fileMetadata = {
-    name: fileName,
-    parents: [folderId],
-  };
+  const response = await drive.files.create({
+    requestBody: { name: fileName, parents: [folderId] },
+    media: { mimeType, body: fs.createReadStream(filePath) },
+    fields: 'id',
+  });
 
-  const media = {
-    mimeType: mimeType,
-    body: fs.createReadStream(filePath),
-  };
-
-  try {
-    const response = await drive.files.create({
-      requestBody: fileMetadata,
-      media: media,
-      fields: 'id',
-    });
-
-    if (!response.data.id) {
-      throw new Error('Falha ao obter o ID do arquivo após o upload.');
-    }
-
-    console.log(`Upload concluído: ${fileName} (ID: ${response.data.id})`);
-    return response.data.id;
-  } catch (error) {
-    console.error(`Erro ao fazer o upload da foto ${fileName}:`, error);
-    throw error;
-  }
+  if (!response.data.id) throw new Error('Falha ao obter o ID do arquivo após o upload.');
+  return response.data.id;
 }
