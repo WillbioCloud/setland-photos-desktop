@@ -1,10 +1,11 @@
-import React, { useCallback, useEffect, useState } from 'react';
-import { ArrowDownLeft, Loader2, Package, Save, Trash2, UserCheck } from 'lucide-react';
+import React, { useCallback, useEffect, useState, useRef } from 'react';
+import { ArrowDownLeft, Loader2, Package, Save, Trash2, UserCheck, Camera, Upload, X } from 'lucide-react';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { supabase } from '@/lib/supabaseClient';
+import { uploadEmployeeAvatar, deleteEmployeeAvatarFromStorage } from '@/lib/avatarStorage';
 import { toast } from 'sonner';
 
 interface EditEmployeeModalProps {
@@ -26,6 +27,13 @@ export default function EditEmployeeModal({
   const [role, setRole] = useState('Operador');
   const [pin, setPin] = useState('');
   const [email, setEmail] = useState('');
+  
+  // Estado da Foto de Perfil
+  const [avatarPreview, setAvatarPreview] = useState<string | null>(null);
+  const [newAvatarFile, setNewAvatarFile] = useState<File | null>(null);
+  const [hasRemovedAvatar, setHasRemovedAvatar] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
   const [assignedEquipments, setAssignedEquipments] = useState<any[]>([]);
   const [isLoadingEquipments, setIsLoadingEquipments] = useState(false);
   const [equipmentLoadError, setEquipmentLoadError] = useState(false);
@@ -61,6 +69,9 @@ export default function EditEmployeeModal({
       setRole('Operador');
       setPin('');
       setEmail('');
+      setAvatarPreview(null);
+      setNewAvatarFile(null);
+      setHasRemovedAvatar(false);
       setAssignedEquipments([]);
       setEquipmentLoadError(false);
       return;
@@ -70,11 +81,41 @@ export default function EditEmployeeModal({
     setRole(employee.role || 'Operador');
     setPin(employee.pin || '');
     setEmail(employee.email || '');
+    
+    // Inicializa a foto atual do funcionário
+    const initialAvatar = employee.avatar_url || (employee.avatar && !employee.avatar.includes('ui-avatars.com') ? employee.avatar : null);
+    setAvatarPreview(initialAvatar);
+    setNewAvatarFile(null);
+    setHasRemovedAvatar(false);
 
     if (isOpen) {
       void loadEmployeeEquipments(employee.id);
     }
   }, [employee, isOpen, loadEmployeeEquipments]);
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (!file.type.startsWith('image/')) {
+      toast.error('Selecione um arquivo de imagem válido (JPEG, PNG ou WebP).');
+      return;
+    }
+
+    setNewAvatarFile(file);
+    setHasRemovedAvatar(false);
+    const objectUrl = URL.createObjectURL(file);
+    setAvatarPreview(objectUrl);
+  };
+
+  const handleRemoveAvatar = () => {
+    setNewAvatarFile(null);
+    setAvatarPreview(null);
+    setHasRemovedAvatar(true);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+  };
 
   const handleSave = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -86,8 +127,27 @@ export default function EditEmployeeModal({
     }
 
     setIsSaving(true);
+    const toastId = toast.loading('Salvando alterações...');
 
     try {
+      let finalAvatarUrl = employee.avatar_url;
+
+      // 1. Se removeu ou trocou a foto, exclui a foto antiga do Storage para não acumular lixo
+      if (hasRemovedAvatar || newAvatarFile) {
+        if (employee.avatar_url) {
+          await deleteEmployeeAvatarFromStorage(employee.avatar_url);
+        }
+      }
+
+      // 2. Se escolheu um novo arquivo, comprime e envia para o Storage
+      if (newAvatarFile) {
+        toast.loading('Processando e enviando nova foto...', { id: toastId });
+        finalAvatarUrl = await uploadEmployeeAvatar(newAvatarFile, employee.id || name.trim());
+      } else if (hasRemovedAvatar) {
+        finalAvatarUrl = null;
+      }
+
+      // 3. Atualiza os dados no Supabase
       const { error } = await supabase
         .from('employees')
         .update({
@@ -95,17 +155,18 @@ export default function EditEmployeeModal({
           role,
           pin: role === 'Gerente' ? pin : null,
           email: role === 'Gerente' ? email.trim() : null,
+          avatar_url: finalAvatarUrl,
         })
         .eq('id', employee.id);
 
       if (error) throw error;
 
-      toast.success('Perfil atualizado com sucesso!');
+      toast.success('Perfil atualizado com sucesso!', { id: toastId });
       onEmployeeUpdated();
       onClose();
-    } catch (error) {
+    } catch (error: any) {
       console.error('Erro ao atualizar funcionário:', error);
-      toast.error('Erro ao atualizar funcionário. Verifique suas permissões e tente novamente.');
+      toast.error(`Erro ao atualizar: ${error.message || 'Falha no banco de dados'}`, { id: toastId });
     } finally {
       setIsSaving(false);
     }
@@ -125,7 +186,7 @@ export default function EditEmployeeModal({
 
       if (error) throw error;
 
-      toast.success('Item devolvido.');
+      toast.success('Item devolvido com sucesso.');
       setAssignedEquipments((current) => current.filter((item) => item.id !== equipment.id));
       window.dispatchEvent(new CustomEvent('equipment-updated'));
     } catch (error) {
@@ -138,8 +199,10 @@ export default function EditEmployeeModal({
 
   if (!employee) return null;
 
+  const initials = employee.name ? employee.name.substring(0, 2).toUpperCase() : 'FT';
+
   return (
-    <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
+    <Dialog open={isOpen} onOpenChange={(open) => !open && !isSaving && onClose()}>
       <DialogContent className="flex max-h-[90vh] flex-col overflow-hidden border-border bg-brand-surface p-0 shadow-2xl sm:max-w-2xl sm:rounded-[2rem]">
         <div className="flex shrink-0 items-center gap-3 border-b border-border-dashed bg-brand-surface px-5 py-4 dark:border-white/10 sm:px-6">
           <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-brand-accent/20 bg-brand-accent/10 text-brand-accent">
@@ -155,6 +218,64 @@ export default function EditEmployeeModal({
 
         <div className="no-scrollbar min-h-0 flex-1 space-y-6 overflow-y-auto p-5 sm:p-6">
           <form onSubmit={handleSave} className="space-y-4">
+            
+            {/* Seletor Visual de Foto de Perfil */}
+            <div className="flex items-center gap-4 p-3 rounded-2xl bg-secondary/30 dark:bg-white/[0.03] border border-border dark:border-white/10">
+              <div 
+                onClick={() => !isSaving && fileInputRef.current?.click()}
+                className="relative group w-16 h-16 rounded-2xl overflow-hidden border-2 border-dashed border-border dark:border-white/20 hover:border-brand-accent bg-background flex items-center justify-center cursor-pointer transition-lux shrink-0 shadow-sm"
+                title="Clique para trocar a foto"
+              >
+                {avatarPreview ? (
+                  <img src={avatarPreview} alt={name} className="w-full h-full object-cover" />
+                ) : (
+                  <div className="w-full h-full bg-brand-accent/10 text-brand-accent flex items-center justify-center font-bold text-base">
+                    {initials}
+                  </div>
+                )}
+                
+                <div className="absolute inset-0 bg-black/60 text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                  <Upload className="w-4 h-4" />
+                </div>
+              </div>
+
+              <input 
+                type="file" 
+                ref={fileInputRef} 
+                onChange={handleFileChange} 
+                accept="image/*" 
+                className="hidden" 
+                disabled={isSaving}
+              />
+
+              <div className="flex-1 min-w-0">
+                <p className="text-xs font-bold text-foreground">Foto de Perfil</p>
+                <p className="text-[11px] text-muted-foreground mt-0.5 truncate">
+                  {newAvatarFile ? newAvatarFile.name : avatarPreview ? 'Foto personalizada carregada' : 'Sem foto cadastrada'}
+                </p>
+                <div className="flex items-center gap-3 mt-2">
+                  <button
+                    type="button"
+                    disabled={isSaving}
+                    onClick={() => fileInputRef.current?.click()}
+                    className="text-xs text-primary hover:underline font-semibold"
+                  >
+                    Trocar Foto
+                  </button>
+                  {avatarPreview && (
+                    <button
+                      type="button"
+                      disabled={isSaving}
+                      onClick={handleRemoveAvatar}
+                      className="text-xs text-destructive hover:underline font-medium"
+                    >
+                      Remover Foto
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+
             <div className="space-y-1.5">
               <label htmlFor="employee-name" className="text-xs font-semibold text-brand-ink">
                 Nome completo
@@ -164,6 +285,7 @@ export default function EditEmployeeModal({
                 value={name}
                 onChange={(event) => setName(event.target.value)}
                 required
+                disabled={isSaving}
                 className="h-10 rounded-xl bg-background"
               />
             </div>
@@ -171,7 +293,7 @@ export default function EditEmployeeModal({
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div className="space-y-1.5">
                 <label className="text-xs font-semibold text-brand-ink">Cargo</label>
-                <Select value={role} onValueChange={(value) => setRole(value ?? 'Operador')}>
+                <Select value={role} onValueChange={(value) => setRole(value ?? 'Operador')} disabled={isSaving}>
                   <SelectTrigger aria-label="Cargo do funcionário" className="h-10 w-full rounded-xl bg-background">
                     <SelectValue />
                   </SelectTrigger>
@@ -194,7 +316,7 @@ export default function EditEmployeeModal({
                   onChange={(event) => setPin(event.target.value)}
                   placeholder="6 dígitos"
                   required={role === 'Gerente'}
-                  disabled={role !== 'Gerente'}
+                  disabled={isSaving || role !== 'Gerente'}
                   autoComplete="new-password"
                   className="h-10 rounded-xl bg-background font-mono"
                 />
@@ -210,6 +332,7 @@ export default function EditEmployeeModal({
                   id="employee-email"
                   type="email"
                   value={email}
+                  disabled={isSaving}
                   onChange={(event) => setEmail(event.target.value)}
                   className="h-10 rounded-xl bg-background"
                 />
@@ -220,8 +343,9 @@ export default function EditEmployeeModal({
               {onDeleteRequest ? (
                 <button
                   type="button"
+                  disabled={isSaving}
                   onClick={() => onDeleteRequest(employee)}
-                  className="flex items-center gap-1.5 rounded-xl border border-destructive/20 bg-destructive/10 px-3.5 py-2.5 text-xs font-semibold text-destructive transition-all hover:bg-destructive hover:text-white active:scale-95 cursor-pointer"
+                  className="flex items-center gap-1.5 rounded-xl border border-destructive/20 bg-destructive/10 px-3.5 py-2.5 text-xs font-semibold text-destructive transition-all hover:bg-destructive hover:text-white active:scale-95 cursor-pointer disabled:opacity-50"
                 >
                   <Trash2 className="h-3.5 w-3.5" />
                   Excluir funcionário
@@ -230,7 +354,7 @@ export default function EditEmployeeModal({
               <button
                 type="submit"
                 disabled={isSaving}
-                className="flex items-center gap-1.5 rounded-xl bg-brand-accent px-5 py-2.5 text-xs font-bold text-brand-accent-fg shadow-sm transition-all hover:opacity-90 active:scale-95 disabled:cursor-not-allowed disabled:opacity-50"
+                className="flex items-center gap-1.5 rounded-xl bg-brand-accent px-5 py-2.5 text-xs font-bold text-brand-accent-fg shadow-sm transition-all hover:opacity-90 active:scale-95 disabled:cursor-not-allowed disabled:opacity-50 gold-glow"
               >
                 {isSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
                 {isSaving ? 'Salvando...' : 'Salvar alterações'}

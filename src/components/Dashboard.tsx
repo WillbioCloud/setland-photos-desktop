@@ -25,10 +25,12 @@ import {
   PERIOD_OPTIONS,
   buildPhotographerPerformance,
   describeRange,
+  findOnlineOrderSession,
   formatCurrencyBRL,
   formatNumberBR,
   formatPercentBR,
   formatTimeBR,
+  indexSessionsByClient,
   isPaidOnlineOrder,
   isPaidPdvOrder,
   isWithinRange,
@@ -60,6 +62,8 @@ interface ActivityItem {
   id: string;
   text: string;
   time: string;
+  paymentMethod?: string;
+  photographerName?: string;
 }
 
 /* ========================================================================== */
@@ -117,19 +121,71 @@ function useAnalyticsDataset(scope: string) {
   return { dataset, isLoading, loadError, reload };
 }
 
-/** Atividade recente do período: últimas vendas (PDV + Site) ou sessões iniciadas. */
-function buildRecentActivities(dataset: AnalyticsDataset, range: DateRange, limit = 4): ActivityItem[] {
+function buildRecentActivities(dataset: AnalyticsDataset, range: DateRange, limit = 6): ActivityItem[] {
+  const sessionById = new Map(dataset.sessions.map((s) => [s.id, s]));
+  const sessionsByClient = indexSessionsByClient(dataset.sessions);
+  const employeeById = new Map(dataset.employees.map((e) => [e.id, e]));
+
+  const resolvePhotog = (session?: SessionRow | null, fallback?: string | null) => {
+    if (session?.photographer_name) return session.photographer_name;
+    if (session?.photographer_id && employeeById.has(session.photographer_id)) {
+      return employeeById.get(session.photographer_id)?.name || 'Fotógrafo';
+    }
+    return fallback || 'Equipe';
+  };
+
+  const formatPay = (m?: string | null, isOnline = false) => {
+    const raw = String(m || '').toLowerCase();
+    if (raw.includes('pix')) return isOnline ? 'PIX (Site)' : 'PIX';
+    if (raw.includes('card') || raw.includes('cart') || raw.includes('credit')) return isOnline ? 'Cartão (Site)' : 'Cartão';
+    if (raw.includes('dinheiro') || raw.includes('cash')) return 'Dinheiro';
+    if (raw.includes('lojinha')) return 'Via Lojinha';
+    return isOnline ? 'Online (Site)' : 'PDV';
+  };
+
   const sales = [
     ...dataset.orders
       .filter((order) => isPaidPdvOrder(order) && isWithinRange(order.created_at, range))
-      .map((order) => ({ id: `pdv-${order.id}`, at: order.created_at ?? '', text: 'Venda no PDV (Balcão)' })),
+      .map((order) => {
+        const sess = order.session_id ? sessionById.get(order.session_id) : null;
+        return {
+          id: `pdv-${order.id}`,
+          at: order.created_at ?? '',
+          text: `Venda PDV · ${formatCurrencyBRL(order.total_amount)}`,
+          paymentMethod: formatPay(order.payment_method, false),
+          photographerName: resolvePhotog(sess, order.photographer_name),
+        };
+      }),
     ...dataset.onlineOrders
       .filter((order) => isPaidOnlineOrder(order) && isWithinRange(order.created_at, range))
-      .map((order) => ({ id: `site-${order.id}`, at: order.created_at ?? '', text: 'Venda Online (Site)' })),
+      .map((order) => {
+        const sess =
+          findOnlineOrderSession(order, sessionsByClient, sessionById) ||
+          dataset.sessions.find(
+            (s) =>
+              s.client_name &&
+              order.client_name &&
+              s.client_name.trim().toLowerCase() === order.client_name.trim().toLowerCase()
+          ) ||
+          null;
+        return {
+          id: `site-${order.id}`,
+          at: order.created_at ?? '',
+          text: `Venda Site · ${formatCurrencyBRL(order.total_amount)}`,
+          paymentMethod: formatPay((order as any).payment_method, true),
+          photographerName: resolvePhotog(sess, null),
+        };
+      }),
   ]
     .sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime())
     .slice(0, limit)
-    .map((item) => ({ id: item.id, text: item.text, time: formatTimeBR(item.at) }));
+    .map((item) => ({
+      id: item.id,
+      text: item.text,
+      time: formatTimeBR(item.at),
+      paymentMethod: item.paymentMethod,
+      photographerName: item.photographerName,
+    }));
 
   if (sales.length > 0) return sales;
 
@@ -138,8 +194,10 @@ function buildRecentActivities(dataset: AnalyticsDataset, range: DateRange, limi
     .slice(0, limit)
     .map((session) => ({
       id: session.id,
-      text: 'Sessão iniciada',
+      text: `Sessão iniciada (${session.client_name || 'Visitante'})`,
       time: formatTimeBR(session.created_at),
+      paymentMethod: 'Aguardando',
+      photographerName: resolvePhotog(session, null),
     }));
 }
 
@@ -170,9 +228,9 @@ function DashboardErrorBanner({ message, onRetry }: { message: string; onRetry: 
 
 function OperatorDashboard() {
   const { dataset, isLoading, loadError, reload } = useAnalyticsDataset('operador');
+  const [period, setPeriod] = useState<PeriodKey>('hoje');
 
-  // O caixa acompanha o acumulado do período inteiro.
-  const range = useMemo<DateRange>(() => resolvePeriodRange('todos'), []);
+  const range = useMemo<DateRange>(() => resolvePeriodRange(period), [period]);
   const summary = useMemo(() => summarizeDataset(dataset, range), [dataset, range]);
   const photographers = useMemo(() => buildPhotographerPerformance(dataset, range), [dataset, range]);
   const activities = useMemo(() => buildRecentActivities(dataset, range), [dataset, range]);
@@ -244,9 +302,34 @@ function OperatorDashboard() {
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         {/* COLUNA ESQUERDA (Maior) - Desempenho da Equipe */}
         <Card className="lg:col-span-7 shadow-sm lux-card dark:bg-white/[0.03] dark:backdrop-blur-xl dark:border-white/10 flex flex-col transition-lux">
-          <CardHeader className="pb-4">
-            <CardTitle className="text-lg font-semibold text-foreground">Desempenho da Equipe</CardTitle>
-            <p className="text-sm text-muted-foreground mt-1">Sessões e taxa de conversão por sessão.</p>
+          <CardHeader className="pb-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+            <div>
+              <CardTitle className="text-lg font-semibold text-foreground">Desempenho da Equipe</CardTitle>
+              <p className="text-sm text-muted-foreground mt-1">Sessões e taxa de conversão por sessão.</p>
+            </div>
+            <div className="flex items-center gap-1 bg-secondary/60 p-1 rounded-xl border border-border/50 self-start sm:self-auto">
+              {(
+                [
+                  { key: 'hoje', label: 'Hoje' },
+                  { key: 'semana', label: 'Semana' },
+                  { key: 'mes', label: 'Mês' },
+                  { key: 'todos', label: 'Todos' },
+                ] as const
+              ).map(({ key, label }) => (
+                <button
+                  key={key}
+                  type="button"
+                  onClick={() => setPeriod(key)}
+                  className={`px-3 py-1 text-xs font-semibold rounded-lg transition-all ${
+                    period === key
+                      ? 'bg-brand-accent text-brand-accent-fg shadow-sm'
+                      : 'text-muted-foreground hover:text-foreground hover:bg-background/40'
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
           </CardHeader>
 
           <CardContent className="flex-1">
@@ -302,15 +385,51 @@ function OperatorDashboard() {
               </CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="flex items-start gap-3 bg-secondary/50 rounded-xl p-3 border border-dashed">
-                <div className="mt-0.5 shrink-0">
-                  <CheckCircle2 className="h-5 w-5 text-emerald-600 dark:text-emerald-400" />
+              {dataset.sessions.length > 0 ? (
+                <div className="max-h-40 overflow-y-auto no-scrollbar space-y-2 pr-1">
+                  {dataset.sessions.slice(0, 15).map((session) => {
+                    const isSynced = session.drive_status === 'synced';
+                    const isError = session.drive_status === 'error';
+
+                    return (
+                      <div
+                        key={session.id}
+                        className="flex items-center justify-between gap-3 p-2.5 rounded-xl bg-secondary/40 border border-border/50 text-xs"
+                      >
+                        <div className="min-w-0 flex-1">
+                          <p className="font-semibold text-foreground truncate">
+                            {session.client_name || 'Sessão'}
+                          </p>
+                          <p className="text-[10px] text-muted-foreground font-mono truncate">
+                            {formatTimeBR(session.created_at)}
+                          </p>
+                        </div>
+                        <span
+                          className={`px-2 py-0.5 rounded-full text-[10px] font-semibold shrink-0 border ${
+                            isSynced
+                              ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20'
+                              : isError
+                              ? 'bg-red-500/10 text-red-500 border-red-500/20'
+                              : 'bg-secondary text-muted-foreground border-border'
+                          }`}
+                        >
+                          {isSynced ? 'No Drive' : isError ? 'Erro' : 'Miniaturas na Nuvem'}
+                        </span>
+                      </div>
+                    );
+                  })}
                 </div>
-                <div>
-                  <p className="text-sm font-medium text-foreground">Uploads em dia</p>
-                  <p className="text-xs text-muted-foreground mt-0.5 leading-relaxed">Todos arquivos seguros no banco em nuvem.</p>
+              ) : (
+                <div className="flex items-start gap-3 bg-secondary/50 rounded-xl p-3 border border-dashed">
+                  <div className="mt-0.5 shrink-0">
+                    <CheckCircle2 className="h-5 w-5 text-emerald-600 dark:text-emerald-400" />
+                  </div>
+                  <div>
+                    <p className="text-sm font-medium text-foreground">Nenhuma sessão registrada</p>
+                    <p className="text-xs text-muted-foreground mt-0.5 leading-relaxed">Os uploads aparecerão aqui automaticamente.</p>
+                  </div>
                 </div>
-              </div>
+              )}
             </CardContent>
           </Card>
 
@@ -327,8 +446,22 @@ function OperatorDashboard() {
                   {activities.map((item) => (
                     <div key={item.id} className="relative">
                       <div className="absolute -left-[25px] top-[4px] h-2.5 w-2.5 bg-card border-2 border-primary rounded-full shadow-sm dark:shadow-[0_0_8px_rgba(217,164,92,0.7)] z-10"></div>
-                      <p className="text-xs font-medium text-foreground leading-tight">{item.text}</p>
-                      <p className="text-[10px] text-muted-foreground mt-1 font-mono tabular-figures">{item.time}</p>
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="text-xs font-medium text-foreground leading-tight">{item.text}</p>
+                        <span className="text-[10px] text-muted-foreground font-mono tabular-figures shrink-0">{item.time}</span>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
+                        {item.paymentMethod && (
+                          <span className="px-1.5 py-0.5 rounded text-[10px] font-mono font-medium bg-primary/10 text-primary border border-primary/20">
+                            {item.paymentMethod}
+                          </span>
+                        )}
+                        {item.photographerName && (
+                          <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-secondary text-muted-foreground border border-border">
+                            📷 {item.photographerName}
+                          </span>
+                        )}
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -577,11 +710,25 @@ function MasterDashboard() {
         </CardHeader>
         <CardContent>
           {activities.length > 0 ? (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-3">
               {activities.map((item) => (
-                <div key={item.id} className="rounded-xl border border-border-dashed bg-background/60 p-3">
-                  <p className="text-xs font-medium text-foreground leading-tight">{item.text}</p>
-                  <p className="text-[10px] text-muted-foreground mt-1 font-mono tabular-figures">{item.time}</p>
+                <div key={item.id} className="rounded-xl border border-border-dashed bg-background/60 p-3 flex flex-col justify-between">
+                  <div>
+                    <div className="flex items-center justify-between gap-1 mb-1.5">
+                      <span className="text-[10px] text-muted-foreground font-mono tabular-figures">{item.time}</span>
+                      {item.paymentMethod && (
+                        <span className="px-1.5 py-0.5 rounded text-[9px] font-mono font-semibold bg-primary/10 text-primary border border-primary/20">
+                          {item.paymentMethod}
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-xs font-medium text-foreground leading-snug">{item.text}</p>
+                  </div>
+                  {item.photographerName && (
+                    <div className="mt-2.5 pt-1.5 border-t border-border/40 text-[10px] text-muted-foreground truncate">
+                      📷 {item.photographerName}
+                    </div>
+                  )}
                 </div>
               ))}
             </div>

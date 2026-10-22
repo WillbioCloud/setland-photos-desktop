@@ -33,6 +33,33 @@ export default function Clientes() {
   const [isFilterOpen, setIsFilterOpen] = useState(false);
   const [syncModalClient, setSyncModalClient] = useState<any>(null);
   const [viewMode, setViewMode] = useState<'table' | 'grid'>('table');
+
+  const [isLoading, setIsLoading] = useState(true);
+  const [dateFilter, setDateFilter] = useState<'Hoje' | 'Ontem' | 'Últimos 7 dias' | 'Todos'>('Hoje');
+  const [isDateFilterOpen, setIsDateFilterOpen] = useState(false);
+  const dateFilterRef = useRef<HTMLDivElement>(null);
+
+  // Mapa de cooldown por cliente: { [sessionId]: segundosRestantes }
+  const [cooldowns, setCooldowns] = useState<Record<string, number>>({});
+  const [isSendingAll, setIsSendingAll] = useState(false);
+
+  useEffect(() => {
+    const activeKeys = Object.keys(cooldowns).filter((k) => cooldowns[k] > 0);
+    if (activeKeys.length === 0) return;
+
+    const timer = setInterval(() => {
+      setCooldowns((prev) => {
+        const next = { ...prev };
+        for (const key of Object.keys(next)) {
+          if (next[key] > 1) next[key] -= 1;
+          else delete next[key];
+        }
+        return next;
+      });
+    }, 1000);
+
+    return () => clearInterval(timer);
+  }, [cooldowns]);
   
   const handleAddSession = (newSession: any) => {
     setClientsList(prev => [newSession, ...prev]);
@@ -68,123 +95,130 @@ export default function Clientes() {
   );
 
   async function loadClients() {
-    /**
-     * Monta a consulta de sessões. A lista de fotos traz `expires_at` e `is_purchased`
-     * (regras de expiração e de compra) — sem nenhum `limit` imposto pelo front.
-     */
-    const buildSessionsQuery = (photoColumns: string, includeSessionExpiry: boolean, includeEmployees: boolean = true) => {
-      const sessionColumns = [
-        'id',
-        'created_at',
-        'status',
-        'drive_status',
-        'drive_folder_id',
-        'cover_photo_url',
-        'local_cache_dir',
-        'client_name',
-        'client_cpf',
-        'client_phone',
-        'photographer_name',
-      ];
-      if (includeSessionExpiry) sessionColumns.push('expires_at');
+    setIsLoading(true);
+    try {
+      /**
+       * Monta a consulta de sessões. A lista de fotos traz `expires_at` e `is_purchased`
+       * (regras de expiração e de compra) — sem nenhum `limit` imposto pelo front.
+       */
+      const buildSessionsQuery = (photoColumns: string, includeSessionExpiry: boolean, includeEmployees: boolean = true) => {
+        const sessionColumns = [
+          'id',
+          'created_at',
+          'status',
+          'drive_status',
+          'drive_folder_id',
+          'cover_photo_url',
+          'local_cache_dir',
+          'client_name',
+          'client_cpf',
+          'client_phone',
+          'photographer_name',
+        ];
+        if (includeSessionExpiry) sessionColumns.push('expires_at');
 
-      const selectClause = `
-        ${sessionColumns.join(', ')},
-        clients ( id, name, phone, cpf ),
-        ${includeEmployees ? 'employees ( id, name, avatar_url ),' : ''}
-        session_photos ( ${photoColumns} )
-      `;
+        const selectClause = `
+          ${sessionColumns.join(', ')},
+          clients ( id, name, phone, cpf ),
+          ${includeEmployees ? 'employees ( id, name, avatar_url ),' : ''}
+          session_photos ( ${photoColumns} )
+        `;
 
-      return supabase
-        .from('photo_sessions')
-        .select(selectClause)
-        .order('created_at', { ascending: false });
-    };
+        return supabase
+          .from('photo_sessions')
+          .select(selectClause)
+          .order('created_at', { ascending: false });
+      };
 
-    const [ { data, error }, { data: onlineOrders } ] = await Promise.all([
-      // Consulta com fallback automático se a tabela employees tiver restrição de permissão RLS (42501)
-      (async () => {
-        let fullResult = await buildSessionsQuery(SESSION_PHOTO_SELECT, true, true);
-        if (fullResult.error && (fullResult.error.code === '42501' || fullResult.error.message?.includes('employees'))) {
-          console.warn('[Clientes] Sem permissão em employees. Executando query sem join de employees.');
-          fullResult = await buildSessionsQuery(SESSION_PHOTO_SELECT, true, false);
-        }
-        if (!fullResult.error || !isMissingColumnError(fullResult.error)) return fullResult;
+      const [ { data, error }, { data: onlineOrders } ] = await Promise.all([
+        // Consulta com fallback automático se a tabela employees tiver restrição de permissão RLS (42501)
+        (async () => {
+          let fullResult = await buildSessionsQuery(SESSION_PHOTO_SELECT, true, true);
+          if (fullResult.error && (fullResult.error.code === '42501' || fullResult.error.message?.includes('employees'))) {
+            console.warn('[Clientes] Sem permissão em employees. Executando query sem join de employees.');
+            fullResult = await buildSessionsQuery(SESSION_PHOTO_SELECT, true, false);
+          }
+          if (!fullResult.error || !isMissingColumnError(fullResult.error)) return fullResult;
 
-        console.warn(
-          '[Clientes] Colunas opcionais ausentes em session_photos. Recarregando com consulta de compatibilidade.',
-          fullResult.error.message
-        );
-        let safeResult = await buildSessionsQuery(SESSION_PHOTO_SELECT_SAFE, false, true);
-        if (safeResult.error && (safeResult.error.code === '42501' || safeResult.error.message?.includes('employees'))) {
-          safeResult = await buildSessionsQuery(SESSION_PHOTO_SELECT_SAFE, false, false);
-        }
-        return safeResult;
-      })(),
-      supabase.from('online_orders').select('client_id').in('payment_status', ['paid', 'delivered'])
-    ]);
-      
-    if (error) {
-      console.error('ERRO SUPABASE AO CARREGAR CLIENTES:', error);
-      return;
-    }
-
-    if (data) {
-      // 2ª camada de garantia: leitura dedicada e paginada de `session_photos`.
-      // Garante que NENHUMA foto importada fique de fora por truncamento do embed.
-      const sessionIds = data.map((item: any) => item.id).filter(Boolean);
-      let allPhotos: SessionPhoto[] = [];
-      try {
-        allPhotos = await fetchAllSessionPhotos(sessionIds);
-      } catch (photoErr) {
-        console.warn('[Clientes] Falha ao complementar a listagem de fotos da sessão:', photoErr);
+          console.warn(
+            '[Clientes] Colunas opcionais ausentes em session_photos. Recarregando com consulta de compatibilidade.',
+            fullResult.error.message
+          );
+          let safeResult = await buildSessionsQuery(SESSION_PHOTO_SELECT_SAFE, false, true);
+          if (safeResult.error && (safeResult.error.code === '42501' || safeResult.error.message?.includes('employees'))) {
+            safeResult = await buildSessionsQuery(SESSION_PHOTO_SELECT_SAFE, false, false);
+          }
+          return safeResult;
+        })(),
+        supabase.from('online_orders').select('client_id').in('payment_status', ['paid', 'delivered'])
+      ]);
+        
+      if (error) {
+        console.error('ERRO SUPABASE AO CARREGAR CLIENTES:', error);
+        return;
       }
 
-      const photosBySession = new Map<string, SessionPhoto[]>();
-      allPhotos.forEach((photo) => {
-        const key = String(photo.sessionId || '');
-        if (!key) return;
-        const bucket = photosBySession.get(key);
-        if (bucket) bucket.push(photo);
-        else photosBySession.set(key, [photo]);
-      });
-
-      const mappedData = data.map((item: any) => {
-        let currentStatus = item.status || 'Pendente';
-        const hasOnlineOrder = onlineOrders?.some(o => o.client_id === item.clients?.id);
-        
-        if (hasOnlineOrder) {
-           currentStatus = 'Site';
-        } else if (currentStatus === 'Convertido/Pago') {
-           currentStatus = 'PDV';
+      if (data) {
+        // 2ª camada de garantia: leitura dedicada e paginada de `session_photos`.
+        // Garante que NENHUMA foto importada fique de fora por truncamento do embed.
+        const sessionIds = data.map((item: any) => item.id).filter(Boolean);
+        let allPhotos: SessionPhoto[] = [];
+        try {
+          allPhotos = await fetchAllSessionPhotos(sessionIds);
+        } catch (photoErr) {
+          console.warn('[Clientes] Falha ao complementar a listagem de fotos da sessão:', photoErr);
         }
 
-        // Une as fotos do embed (SSD local) com as da leitura paginada (Nuvem), sem duplicar.
-        const photos = mergeSessionPhotos(
-          (item.session_photos || []).map(shapeSessionPhoto),
-          photosBySession.get(String(item.id)) || []
-        );
+        const photosBySession = new Map<string, SessionPhoto[]>();
+        allPhotos.forEach((photo) => {
+          const key = String(photo.sessionId || '');
+          if (!key) return;
+          const bucket = photosBySession.get(key);
+          if (bucket) bucket.push(photo);
+          else photosBySession.set(key, [photo]);
+        });
 
-        return {
-          id: item.id,
-          clientId: item.clients?.id,
-          name: item.clients?.name || item.client_name || 'Cliente Desconhecido',
-          phone: item.clients?.phone || item.client_phone || '',
-          cpf: item.clients?.cpf || item.client_cpf || '',
-          photographer: item.employees?.name || item.photographer_name || 'Não atribuído',
-          date: new Date(item.created_at).toLocaleString('pt-BR'),
-          createdAt: item.created_at,
-          expiresAt: item.expires_at || null,
-          status: currentStatus,
-          driveStatus: item.drive_status || 'pending',
-          driveFolderId: item.drive_folder_id || null,
-          avatar: item.cover_photo_url || item.employees?.avatar_url || null,
-          photos,
-          pendingPhotosCount: photos.filter((photo) => !isPhotoPurchased(photo)).length,
-          purchasedPhotosCount: photos.filter(isPhotoPurchased).length,
-        };
-      });
-      setClientsList(mappedData);
+        const mappedData = data.map((item: any) => {
+          let currentStatus = item.status || 'Pendente';
+          const hasOnlineOrder = onlineOrders?.some(o => o.client_id === item.clients?.id);
+          
+          if (hasOnlineOrder) {
+             currentStatus = 'Site';
+          } else if (currentStatus === 'Convertido/Pago') {
+             currentStatus = 'PDV';
+          }
+
+          // Une as fotos do embed (SSD local) com as da leitura paginada (Nuvem), sem duplicar.
+          const photos = mergeSessionPhotos(
+            (item.session_photos || []).map(shapeSessionPhoto),
+            photosBySession.get(String(item.id)) || []
+          );
+
+          return {
+            id: item.id,
+            clientId: item.clients?.id,
+            name: item.clients?.name || item.client_name || 'Cliente Desconhecido',
+            phone: item.clients?.phone || item.client_phone || '',
+            cpf: item.clients?.cpf || item.client_cpf || '',
+            photographer: item.employees?.name || item.photographer_name || 'Não atribuído',
+            date: new Date(item.created_at).toLocaleString('pt-BR'),
+            createdAt: item.created_at,
+            expiresAt: item.expires_at || null,
+            status: currentStatus,
+            driveStatus: item.drive_status || 'pending',
+            driveFolderId: item.drive_folder_id || null,
+            avatar: item.cover_photo_url || item.employees?.avatar_url || null,
+            photos,
+            pendingPhotosCount: photos.filter((photo) => !isPhotoPurchased(photo)).length,
+            purchasedPhotosCount: photos.filter(isPhotoPurchased).length,
+          };
+        });
+        setClientsList(mappedData);
+      }
+    } catch (err) {
+      console.error('ERRO AO CARREGAR CLIENTES:', err);
+    } finally {
+      setIsLoading(false);
     }
   }
   
@@ -207,6 +241,9 @@ export default function Clientes() {
       if (filterRef.current && !filterRef.current.contains(event.target as Node)) {
         setIsFilterOpen(false);
       }
+      if (dateFilterRef.current && !dateFilterRef.current.contains(event.target as Node)) {
+        setIsDateFilterOpen(false);
+      }
       if (unconvertedRef.current && !unconvertedRef.current.contains(event.target as Node)) {
         setIsUnconvertedOpen(false);
       }
@@ -214,6 +251,7 @@ export default function Clientes() {
     function handleKeyDown(event: KeyboardEvent) {
       if (event.key === 'Escape') {
         setIsFilterOpen(false);
+        setIsDateFilterOpen(false);
         setIsUnconvertedOpen(false);
       }
     }
@@ -246,15 +284,43 @@ export default function Clientes() {
     return name.split(' ').map(n => n[0]).slice(0, 2).join('').toUpperCase();
   };
 
-  const filteredClients = clientsList.filter(client => {
-    const matchesSearch = client.name.toLowerCase().includes(searchTerm.toLowerCase());
-    const matchesFilter = 
-      activeFilter === 'Todos' ? true :
-      activeFilter === 'Pendentes' ? client.status === 'Pendente' :
-      activeFilter === 'Convertidos' ? (client.status === 'Convertido/Pago' || client.status === 'PDV' || client.status === 'Site') :
-      client.status === 'Abandonado';
-    return matchesSearch && matchesFilter;
-  });
+  const filteredClients = React.useMemo(() => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    const yesterday = new Date(today);
+    yesterday.setDate(yesterday.getDate() - 1);
+
+    const last7Days = new Date(today);
+    last7Days.setDate(last7Days.getDate() - 7);
+
+    return clientsList.filter(client => {
+      const matchesSearch = client.name.toLowerCase().includes(searchTerm.toLowerCase());
+      const matchesFilter = 
+        activeFilter === 'Todos' ? true :
+        activeFilter === 'Pendentes' ? client.status === 'Pendente' :
+        activeFilter === 'Convertidos' ? (client.status === 'Convertido/Pago' || client.status === 'PDV' || client.status === 'Site') :
+        client.status === 'Abandonado';
+
+      if (!matchesSearch || !matchesFilter) return false;
+
+      if (dateFilter === 'Todos') return true;
+
+      const clientDate = client.createdAt ? new Date(client.createdAt) : null;
+      if (!clientDate) return false;
+
+      if (dateFilter === 'Hoje') {
+        return clientDate >= today;
+      }
+      if (dateFilter === 'Ontem') {
+        return clientDate >= yesterday && clientDate < today;
+      }
+      if (dateFilter === 'Últimos 7 dias') {
+        return clientDate >= last7Days;
+      }
+      return true;
+    });
+  }, [clientsList, searchTerm, activeFilter, dateFilter]);
 
   /* ───────────────────────── Ações de WhatsApp / PDV ───────────────────────── */
 
@@ -368,14 +434,41 @@ export default function Clientes() {
 
     if (result.channel === 'n8n') {
       toast.success('Link de compra online enviado via WhatsApp!', { id: toastId, description: shopUrl });
+      setCooldowns((prev) => ({ ...prev, [client.id]: 60 }));
     } else if (result.sent) {
       toast.success('WhatsApp aberto com o link da vitrine pronto para envio.', { id: toastId, description: shopUrl });
+      setCooldowns((prev) => ({ ...prev, [client.id]: 60 }));
     } else {
       toast.error('Não foi possível disparar a mensagem.', {
         id: toastId,
         description: 'Confira o telefone do cliente e as configurações de WhatsApp do sistema.'
       });
     }
+  };
+
+  /** Disparo em lote com intervalo seguro de 2.5s para todos os clientes pendentes */
+  const handleSendToAllPending = async () => {
+    const eligible = unconvertedClients.filter((c) => normalizeWhatsAppPhone(c.phone) && !cooldowns[c.id]);
+    if (eligible.length === 0) {
+      toast.info('Nenhum cliente elegível ou todos já estão em tempo de espera.');
+      return;
+    }
+
+    setIsSendingAll(true);
+    const toastId = toast.loading(`Disparando links para ${eligible.length} cliente(s)...`);
+
+    for (let i = 0; i < eligible.length; i++) {
+      const client = eligible[i];
+      toast.loading(`Enviando (${i + 1}/${eligible.length}): ${client.name}...`, { id: toastId });
+      await handleSendOnlineShopLink(client);
+      // Pausa de 2.5s entre disparos para segurança da instância WhatsApp
+      if (i < eligible.length - 1) {
+        await new Promise((r) => setTimeout(r, 2500));
+      }
+    }
+
+    toast.success(`Disparo em lote finalizado para ${eligible.length} cliente(s)!`, { id: toastId });
+    setIsSendingAll(false);
   };
 
   /** Botão de carrinho/PDV: abre o caixa já com a sessão deste cliente carregada. */
@@ -448,16 +541,29 @@ export default function Clientes() {
             {isUnconvertedOpen && (
               <div className="absolute left-0 sm:left-auto sm:right-0 mt-3 w-80 sm:w-96 bg-card dark:bg-[#1A0B18]/95 dark:backdrop-blur-2xl border border-border dark:border-white/10 rounded-2xl shadow-2xl dark:shadow-black/70 lux-card z-50 overflow-hidden animate-in fade-in slide-in-from-top-2 duration-200">
                 {/* Cabeçalho do Balão */}
-                <div className="px-4 py-3 bg-muted/40 dark:bg-white/[0.03] border-b border-border-dashed flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <Sparkles className="h-4 w-4 text-primary"/>
-                    <span className="text-xs font-bold uppercase tracking-wider text-foreground">
+                <div className="px-4 py-3 bg-muted/40 dark:bg-white/[0.03] border-b border-border-dashed flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <Sparkles className="h-4 w-4 text-primary shrink-0"/>
+                    <span className="text-xs font-bold uppercase tracking-wider text-foreground truncate">
                       Clientes Pendentes
                     </span>
+                    <span className="text-[11px] font-medium text-muted-foreground font-mono bg-background dark:bg-white/[0.06] px-2 py-0.5 rounded-full border border-border/50 shrink-0">
+                      {unconvertedClients.length}
+                    </span>
                   </div>
-                  <span className="text-[11px] font-medium text-muted-foreground font-mono bg-background dark:bg-white/[0.06] px-2 py-0.5 rounded-full border border-border/50">
-                    {unconvertedClients.length} lead{unconvertedClients.length !== 1 ? 's' : ''}
-                  </span>
+
+                  {unconvertedClients.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={handleSendToAllPending}
+                      disabled={isSendingAll}
+                      className="px-2.5 py-1 text-[11px] font-semibold rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-60 transition-all flex items-center gap-1.5 shrink-0 shadow-sm active:scale-95"
+                      title="Dispara link da vitrine para todos os clientes pendentes com intervalo de segurança"
+                    >
+                      <Send className="h-3 w-3" />
+                      {isSendingAll ? 'Disparando...' : `Enviar p/ Todos (${unconvertedClients.filter(c => normalizeWhatsAppPhone(c.phone) && !cooldowns[c.id]).length})`}
+                    </button>
+                  )}
                 </div>
 
                 {/* Lista de Clientes com Fotos Pendentes */}
@@ -497,21 +603,33 @@ export default function Clientes() {
                           </div>
                         </div>
 
-                        {/* Botão de Disparo do Link de Compra Online */}
+                        {/* Botão de Disparo do Link de Compra Online com Cooldown */}
                         <button
                           onClick={(e) => {
                             e.stopPropagation();
                             handleSendOnlineShopLink(client);
                           }}
-                          disabled={!client.phone}
-                          className={`p-2 rounded-xl transition-lux flex items-center justify-center shrink-0 border shadow-sm active:scale-95 ${
-                            client.phone
+                          disabled={!client.phone || Boolean(cooldowns[client.id]) || isSendingAll}
+                          className={`min-w-[36px] h-9 px-2 rounded-xl transition-lux flex items-center justify-center shrink-0 border shadow-sm active:scale-95 ${
+                            cooldowns[client.id]
+                              ? 'bg-muted/80 text-muted-foreground border-border cursor-not-allowed font-mono text-xs font-bold'
+                              : client.phone
                               ? 'bg-primary/10 hover:bg-primary text-primary hover:text-primary-foreground border-primary/20 hover:border-primary'
                               : 'bg-muted/40 text-muted-foreground/30 border-transparent cursor-not-allowed'
                           }`}
-                          title={client.phone ? 'Enviar link de compra online no WhatsApp' : 'Cliente sem telefone'}
+                          title={
+                            cooldowns[client.id]
+                              ? `Aguarde ${cooldowns[client.id]}s para novo disparo`
+                              : client.phone
+                              ? 'Enviar link de compra online no WhatsApp'
+                              : 'Cliente sem telefone'
+                          }
                         >
-                          <Send className="h-4 w-4"/>
+                          {cooldowns[client.id] ? (
+                            <span className="font-mono text-xs font-bold text-muted-foreground">{cooldowns[client.id]}s</span>
+                          ) : (
+                            <Send className="h-4 w-4"/>
+                          )}
                         </button>
                       </div>
                     ))
@@ -536,6 +654,40 @@ export default function Clientes() {
               onChange={(e) => setSearchTerm(e.target.value)}
               className="pl-11 pr-4 py-2.5 bg-background dark:bg-white/[0.05] dark:backdrop-blur-xl shadow-sm dark:shadow-none lux-card rounded-full text-sm text-foreground placeholder:text-muted-foreground/70 focus:outline-none focus:ring-2 focus:ring-ring focus:border-primary/40 transition-lux w-64 border border-input dark:border-white/10"
             />
+          </div>
+
+          {/* Dropdown de Filtro de Data */}
+          <div className="relative" ref={dateFilterRef}>
+            <button 
+              onClick={() => setIsDateFilterOpen(!isDateFilterOpen)}
+              className="flex items-center gap-2 px-4 py-2.5 bg-background shadow-sm hover:bg-muted text-foreground rounded-full text-sm font-medium transition-colors border border-input"
+            >
+              <Calendar className="h-4 w-4 text-primary" />
+              <span>{dateFilter}</span>
+              <ChevronDown className={`h-3.5 w-3.5 transition-transform duration-200 ${isDateFilterOpen ? 'rotate-180' : ''}`} />
+            </button>
+            
+            {isDateFilterOpen && (
+              <div className="absolute right-0 mt-3 w-44 bg-card dark:bg-[#1A0B18]/90 dark:backdrop-blur-xl border border-border dark:border-white/10 rounded-xl shadow-md dark:shadow-black/60 lux-card z-50 overflow-hidden animate-in fade-in slide-in-from-top-2 duration-200">
+                <div className="py-2 flex flex-col">
+                  {(['Hoje', 'Ontem', 'Últimos 7 dias', 'Todos'] as const).map(option => (
+                    <button
+                      key={option}
+                      onClick={() => {
+                        setDateFilter(option);
+                        setIsDateFilterOpen(false);
+                      }}
+                      className="flex items-center justify-between px-4 py-2.5 text-sm text-left hover:bg-muted transition-colors"
+                    >
+                      <span className={dateFilter === option ? 'text-foreground font-semibold' : 'text-muted-foreground'}>
+                        {option}
+                      </span>
+                      {dateFilter === option && <Check className="h-4 w-4 text-primary" />}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
           
           {/* Dropdown de Filtros */}
@@ -603,7 +755,68 @@ export default function Clientes() {
 
       {/* DataGrid Container Padronizado */}
       <Card className="shadow-sm overflow-hidden flex flex-col h-[calc(100vh-220px)] min-h-[480px]">
-        {filteredClients.length > 0 ? (
+        {isLoading ? (
+          <CardContent className="p-0 flex-1 flex flex-col min-h-0 overflow-hidden">
+            {viewMode === 'table' ? (
+              <div className="flex-1 overflow-y-auto no-scrollbar">
+                <Table>
+                  <TableHeader className="sticky top-0 z-10 bg-card shadow-sm">
+                    <TableRow className="bg-muted/50 border-b-border-dashed">
+                      <TableHead className="px-8 py-5">Cliente</TableHead>
+                      <TableHead className="px-8 py-5">Fotógrafo</TableHead>
+                      <TableHead className="px-8 py-5">Data / Nuvem</TableHead>
+                      <TableHead className="px-8 py-5">Status</TableHead>
+                      <TableHead className="px-8 py-5 text-right">Ações</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {Array.from({ length: 6 }).map((_, i) => (
+                      <TableRow key={i} className="border-b-border-dashed dark:border-white/[0.06]">
+                        <TableCell className="px-8 py-5">
+                          <div className="flex items-center gap-4">
+                            <div className="w-10 h-10 rounded-full bg-muted animate-pulse shrink-0" />
+                            <div className="space-y-2">
+                              <div className="h-4 w-32 bg-muted rounded-md animate-pulse" />
+                              <div className="h-3 w-20 bg-muted/60 rounded-md animate-pulse" />
+                            </div>
+                          </div>
+                        </TableCell>
+                        <TableCell className="px-8 py-5">
+                          <div className="h-4 w-28 bg-muted rounded-md animate-pulse" />
+                        </TableCell>
+                        <TableCell className="px-8 py-5">
+                          <div className="h-4 w-32 bg-muted rounded-md animate-pulse" />
+                        </TableCell>
+                        <TableCell className="px-8 py-5">
+                          <div className="h-6 w-24 bg-muted rounded-full animate-pulse" />
+                        </TableCell>
+                        <TableCell className="px-8 py-5 text-right">
+                          <div className="flex items-center justify-end gap-2">
+                            <div className="w-9 h-9 rounded-full bg-muted animate-pulse" />
+                            <div className="w-9 h-9 rounded-full bg-muted animate-pulse" />
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            ) : (
+              <div className="flex-1 overflow-y-auto no-scrollbar p-6">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+                  {Array.from({ length: 8 }).map((_, i) => (
+                    <div key={i} className="bg-card dark:bg-[#1A0B18]/70 border border-border dark:border-white/10 rounded-2xl p-4 space-y-3">
+                      <div className="aspect-[4/3] rounded-xl bg-muted animate-pulse" />
+                      <div className="h-4 w-3/4 bg-muted rounded-md animate-pulse" />
+                      <div className="h-3 w-1/2 bg-muted/60 rounded-md animate-pulse" />
+                      <div className="h-3 w-2/3 bg-muted/60 rounded-md animate-pulse" />
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </CardContent>
+        ) : filteredClients.length > 0 ? (
           <CardContent className="p-0 flex-1 flex flex-col min-h-0 overflow-hidden">
             {viewMode === 'table' ? (
               <div className="flex-1 overflow-y-auto no-scrollbar [&_[data-slot=table-container]]:overflow-visible">

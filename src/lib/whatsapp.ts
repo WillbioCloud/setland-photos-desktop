@@ -62,12 +62,12 @@ export function getFirstName(fullName?: string | null): string {
 /** Mensagem de reenvio do link de alta resolução no Google Drive. */
 export function buildDriveDownloadMessage(clientName: string | undefined, driveLink: string): string {
   return [
-    `Olá, ${getFirstName(clientName)}! Tudo bem? 😊`,
+    `Olá, *${getFirstName(clientName)}*! Tudo bem? 😊`,
     '',
-    'Segue novamente o link da sua pasta com as fotos em ALTA RESOLUÇÃO da Setland Fotos:',
+    'Segue novamente o link da sua pasta com as fotos em ALTA RESOLUÇÃO do Setland:',
     driveLink,
     '',
-    `O link fica disponível por ${30} dias. Qualquer dificuldade para baixar, é só responder por aqui! 📸`,
+    `O link ficará disponível por ${30} dias. Qualquer dificuldade para baixar, é só responder por aqui! 📸`,
   ].join('\n');
 }
 
@@ -86,7 +86,7 @@ export function buildOnlineStoreMessage(
     : `🔑 *Para acessar suas fotos:* Digite o seu CPF cadastrado no momento da visita.`;
 
   return (
-    `🏰 Olá, ${firstName}! Você saiu do Castelo Setland sem ver suas fotos?\n\n` +
+    `🏰 Olá, *${firstName}*! Você saiu do Castelo Setland sem ver suas fotos?\n\n` +
     `Não se preocupe! As lembranças da sua aventura estão guardadas com segurança em nosso reino. 📸✨\n\n` +
     `Acesse o portal abaixo para ver sua galeria e escolher suas fotos favoritas:\n` +
     `👉 ${shopUrl}\n\n` +

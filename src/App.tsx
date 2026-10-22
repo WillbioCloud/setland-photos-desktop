@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import Header from './components/Header';
+import Header, { Sidebar } from './components/Header';
 import Dashboard from './components/Dashboard';
 import GlobalUploadModal from './components/GlobalUploadModal';
 import Clientes from './components/Clientes';
@@ -7,10 +7,12 @@ import PDV from './components/PDV';
 import Pacotes from './components/Pacotes';
 import Historico from './components/Historico';
 import AdminLoginModal from './components/AdminLoginModal';
+import OperatorProfileModal from './components/OperatorProfileModal';
 import Equipe from './components/Equipe';
 import Settings from './components/Settings';
 import { Toaster } from "@/components/ui/sonner"
 import LoginScreen from './components/LoginScreen';
+import UpdateModal from './components/UpdateModal';
 import { supabase } from '@/lib/supabaseClient';
 
 export type UserRole = 'operador' | 'gerente' | 'dono';
@@ -19,6 +21,7 @@ function App() {
   const [activeTab, setActiveTab] = useState('dashboard');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isAdminModalOpen, setIsAdminModalOpen] = useState(false);
+  const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
   
   // Controle de acesso global
   const [userRole, setUserRole] = useState<UserRole>('operador');
@@ -166,25 +169,50 @@ function App() {
   }
 
   if (!isAuthenticated) {
-    return <LoginScreen onLoginSuccess={handleLoginSuccess} />;
+    return (
+      <>
+        <LoginScreen onLoginSuccess={handleLoginSuccess} />
+        <UpdateModal />
+      </>
+    );
   }
 
   return (
-    <div className="min-h-screen bg-brand-bg text-brand-ink font-sans selection:bg-brand-accent/30 flex flex-col transition-colors duration-300 ease-out">
-      <Header 
-        activeTab={activeTab} 
-        setActiveTab={setActiveTab} 
+    <div className="h-screen w-screen bg-brand-bg text-brand-ink font-sans selection:bg-brand-accent/30 flex overflow-hidden transition-colors duration-300 ease-out">
+      {/* Sidebar Lateral Esquerda Fixa (Ideal para monitores quadrados de quiosque) */}
+      <Sidebar
+        activeTab={activeTab}
+        setActiveTab={setActiveTab}
         userRole={userRole}
-        onAdminClick={() => setIsAdminModalOpen(true)}
-        onNewClientClick={() => setIsModalOpen(true)}
+      />
+
+      {/* Área Principal Direita: Topbar Compacta + Conteúdo */}
+      <div className="flex-1 flex flex-col h-full overflow-hidden min-w-0">
+        <Header 
+          activeTab={activeTab} 
+          setActiveTab={setActiveTab} 
+          userRole={userRole}
+          onAdminClick={() => setIsAdminModalOpen(true)}
+          onNewClientClick={() => setIsModalOpen(true)}
+          onProfileClick={() => setIsProfileModalOpen(true)}
+          onLogout={handleLogout}
+        />
+        
+        <main className="flex-1 overflow-hidden p-3 md:p-5 xl:p-6 flex flex-col min-w-0">
+          <div className="flex-1 w-full mx-auto overflow-y-auto pr-1 no-scrollbar min-w-0">
+            {renderContent()}
+          </div>
+        </main>
+      </div>
+
+      {/* Modal de Perfil da Operação (Fotógrafos / Gerente / Dono) */}
+      <OperatorProfileModal
+        isOpen={isProfileModalOpen}
+        onClose={() => setIsProfileModalOpen(false)}
+        userRole={userRole}
+        onElevateToAdmin={() => setIsAdminModalOpen(true)}
         onLogout={handleLogout}
       />
-      
-      <main className="flex-1 overflow-hidden p-4 md:p-6 flex flex-col">
-        <div className="flex-1 w-full max-w-7xl mx-auto overflow-y-auto pr-2 no-scrollbar">
-          {renderContent()}
-        </div>
-      </main>
 
       <GlobalUploadModal 
         isOpen={isModalOpen} 
@@ -196,6 +224,7 @@ function App() {
         onClose={() => setIsAdminModalOpen(false)}
         onLoginSuccess={(role) => setUserRole(role)}
       />
+      <UpdateModal />
       <Toaster />
     </div>
   );

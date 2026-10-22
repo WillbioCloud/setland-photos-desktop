@@ -7,6 +7,7 @@ import EmployeeModal from './EmployeeModal';
 import EditEmployeeModal from './EditEmployeeModal';
 import EquipmentModal from './EquipmentModal';
 import { supabase } from '@/lib/supabaseClient';
+import { deleteEmployeeAvatarFromStorage } from '@/lib/avatarStorage';
 import { toast } from 'sonner';
 
 export type UserRole = 'operador' | 'gerente' | 'dono';
@@ -33,6 +34,7 @@ export default function Equipe({ userRole }: EquipeProps) {
         status: item.status,
         pin: item.pin,
         email: item.email,
+        avatar_url: item.avatar_url,
         date: new Date(item.created_at).toLocaleDateString('pt-BR'),
         avatar: item.avatar_url || `https://ui-avatars.com/api/?name=${encodeURIComponent(item.name)}&background=D9A45C&color=fff`
       }));
@@ -75,7 +77,10 @@ export default function Equipe({ userRole }: EquipeProps) {
         console.warn('Aviso ao desvincular equipamentos do funcionário excluído:', equipError);
       }
 
-      // 2. Remove o funcionário do banco de dados
+      // 2. Remove a foto de perfil do Storage (se existir)
+      await deleteEmployeeAvatarFromStorage(employeeToDelete.avatar_url || employeeToDelete.avatar);
+
+      // 3. Remove o funcionário do banco de dados
       const { error } = await supabase
         .from('employees')
         .delete()

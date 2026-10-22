@@ -450,6 +450,17 @@ export default function Settings({ userRole }: SettingsProps) {
             </div>
           </CardContent>
         </Card>
+
+        {/* INFORMAÇÕES DO SISTEMA */}
+        <div className="md:col-span-2 pt-2 pb-4 flex flex-col sm:flex-row items-center justify-between text-xs text-muted-foreground border-t border-border/50 gap-2">
+          <div className="flex items-center gap-2">
+            <span className="inline-block w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+            <span>Sistema Operacional &amp; Atualizado</span>
+          </div>
+          <span className="font-mono text-[11px] bg-secondary/80 px-2.5 py-1 rounded-md border border-border">
+            Setland Fotos Desktop v{__APP_VERSION__}
+          </span>
+        </div>
       </div>
     </div>
   );

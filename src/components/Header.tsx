@@ -1,5 +1,21 @@
 import React from 'react';
-import { UserPlus, LayoutDashboard, Users, Package, ShoppingCart, History, Lock, LogOut, Briefcase, Settings, Sun, Moon, Monitor } from 'lucide-react';
+import { 
+  UserPlus, 
+  LayoutDashboard, 
+  Users, 
+  Package, 
+  ShoppingCart, 
+  History, 
+  Lock, 
+  LogOut, 
+  Briefcase, 
+  Settings, 
+  Sun, 
+  Moon, 
+  Monitor, 
+  Camera, 
+  Shield 
+} from 'lucide-react';
 import watermarkLogo from '../assets/watermark_setland.png';
 import { useTheme, type ThemeMode } from '@/hooks/useTheme';
 
@@ -9,8 +25,8 @@ const THEME_META: Record<ThemeMode, { icon: typeof Sun; label: string; hint: str
   system: { icon: Monitor, label: 'Sistema', hint: 'Segue o SO' },
 };
 
-/** Seletor de tema (Claro → Escuro → Sistema) com transição animada de ícones. Visual puro. */
-function ThemeSelector() {
+/** Seletor de tema (Claro → Escuro → Sistema) com transição animada de ícones. */
+export function ThemeSelector() {
   const { theme, cycleTheme } = useTheme();
   const { icon: Icon, label, hint } = THEME_META[theme];
   return (
@@ -18,7 +34,7 @@ function ThemeSelector() {
       onClick={cycleTheme}
       title={`Tema: ${label} (${hint}) — clique para alternar`}
       aria-label={`Alternar tema. Atual: ${label}`}
-      className="app-no-drag relative p-2 xl:p-2.5 rounded-full text-brand-muted hover:text-brand-accent hover:bg-brand-accent/10 transition-lux flex items-center justify-center border border-transparent hover:border-brand-accent/20 overflow-hidden"
+      className="app-no-drag relative p-2 rounded-xl text-brand-muted hover:text-brand-accent hover:bg-brand-accent/10 transition-lux flex items-center justify-center border border-border dark:border-white/10 overflow-hidden"
     >
       <span key={theme} className="animate-theme-icon flex items-center justify-center">
         <Icon className="h-4 w-4" />
@@ -29,16 +45,27 @@ function ThemeSelector() {
 
 export type UserRole = 'operador' | 'gerente' | 'dono';
 
-interface HeaderProps {
+export interface SidebarProps {
   activeTab: string;
   setActiveTab: (tab: string) => void;
+  userRole: UserRole;
+}
+
+export interface HeaderProps {
+  activeTab: string;
+  setActiveTab?: (tab: string) => void;
   onAdminClick?: () => void;
   onNewClientClick?: () => void;
+  onProfileClick?: () => void;
   userRole: UserRole;
   onLogout?: () => void;
 }
 
-export default function Header({ activeTab, setActiveTab, onAdminClick, onNewClientClick, userRole, onLogout }: HeaderProps) {
+/**
+ * Sidebar Lateral Esquerda Fixa
+ * Ideal para monitores quadrados (4:3 / 5:4) como 1024x768 ou 1280x1024.
+ */
+export function Sidebar({ activeTab, setActiveTab, userRole }: SidebarProps) {
   const menuItems = [
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
     { id: 'clientes', label: 'Clientes', icon: Users },
@@ -56,21 +83,29 @@ export default function Header({ activeTab, setActiveTab, onAdminClick, onNewCli
   }
 
   return (
-    /* pt-[38px] reserva exatamente a altura do titleBarOverlay do Windows (electron/main.ts),
-       evitando que logo, navegação e botões fiquem sob minimizar/maximizar/fechar. */
-    <header className="app-drag-region px-4 xl:px-6 pt-[38px] pb-4 xl:pb-5 flex items-center justify-between gap-2 overflow-hidden sticky top-0 z-30">
-      {/* Bloco Esquerdo: Logo */}
-      <div className="app-no-drag bg-brand-surface dark:bg-white/[0.04] dark:backdrop-blur-xl dark:border dark:border-white/10 dark:lux-top-highlight shadow-sm dark:shadow-none lux-card px-4 xl:px-6 py-2 xl:py-2.5 rounded-full flex items-center gap-2 xl:gap-3 shrink-0 transition-lux">
-        <img
-          src={watermarkLogo}
-          alt="Setland"
-          className="h-6 xl:h-7 w-auto object-contain dark:drop-shadow-[0_0_10px_rgba(217,164,92,0.45)]"
-        />
-        <h1 className="text-lg xl:text-xl font-bold text-brand-ink tracking-tight hidden sm:block">Setland</h1>
+    <aside className="app-no-drag w-56 xl:w-60 h-full shrink-0 flex flex-col bg-brand-surface dark:bg-[#111318] border-r border-border dark:border-white/10 select-none z-30 transition-colors duration-300">
+      
+      {/* Topo da Sidebar: Logo + Título + Versão (pt-[38px] para Electron window buttons) */}
+      <div className="app-drag-region pt-[38px] px-5 pb-4 border-b border-border dark:border-white/10 shrink-0">
+        <div className="app-no-drag flex items-center gap-3">
+          <img
+            src={watermarkLogo}
+            alt="Setland"
+            className="h-8 w-auto object-contain dark:drop-shadow-[0_0_12px_rgba(217,164,92,0.45)] shrink-0"
+          />
+          <div className="flex flex-col min-w-0">
+            <div className="flex items-center gap-1.5">
+              <h1 className="text-lg font-bold text-brand-ink tracking-tight">Setland</h1>
+              <span className="text-[10px] font-mono font-bold px-1.5 py-0.5 rounded-full bg-brand-accent/10 text-brand-accent border border-brand-accent/20 tracking-tight select-none">
+                v{__APP_VERSION__}
+              </span>
+            </div>
+          </div>
+        </div>
       </div>
 
-      {/* Bloco Central: Navegação */}
-      <nav className="app-no-drag bg-brand-surface dark:bg-white/[0.04] dark:backdrop-blur-xl dark:border dark:border-white/10 shadow-sm dark:shadow-none lux-card p-1 xl:p-1.5 rounded-full flex items-center justify-center gap-0.5 xl:gap-1 flex-1 min-w-0 transition-lux">
+      {/* Navegação Vertical com destaque dourado na aba ativa */}
+      <nav className="flex-1 px-3 py-4 space-y-1.5 overflow-y-auto no-scrollbar">
         {menuItems.map((item) => {
           const Icon = item.icon;
           const isActive = activeTab === item.id;
@@ -78,68 +113,122 @@ export default function Header({ activeTab, setActiveTab, onAdminClick, onNewCli
             <button
               key={item.id}
               onClick={() => setActiveTab(item.id)}
-              className={`flex items-center gap-1.5 xl:gap-2 px-3 xl:px-6 py-2 xl:py-2.5 rounded-full font-medium transition-lux
-                ${isActive
-                  ? 'bg-brand-accent text-brand-accent-fg shadow-sm gold-glow'
-                  : 'text-brand-muted hover:text-brand-ink hover:bg-brand-accent/10 dark:hover:bg-white/[0.06]'
-                }`}
+              className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl font-medium transition-lux text-xs xl:text-sm select-none ${
+                isActive
+                  ? 'bg-brand-accent text-brand-accent-fg shadow-sm gold-glow font-bold'
+                  : 'text-brand-muted hover:text-brand-ink hover:bg-brand-accent/10 dark:hover:bg-white/[0.05]'
+              }`}
             >
-              <Icon className="h-4 w-4 shrink-0" />
-              <span className="text-xs xl:text-sm whitespace-nowrap">{item.label}</span>
+              <Icon className={`h-4 w-4 shrink-0 ${isActive ? 'text-brand-accent-fg' : 'text-primary'}`} />
+              <span className="truncate">{item.label}</span>
             </button>
           );
         })}
       </nav>
 
-      {/* Bloco Direito: Terminal e Acesso Gerencial */}
-      <div className="app-no-drag bg-brand-surface dark:bg-white/[0.04] dark:backdrop-blur-xl dark:border dark:border-white/10 shadow-sm dark:shadow-none lux-card px-2 xl:px-3 py-1.5 xl:py-2 rounded-full flex items-center gap-2 xl:gap-4 shrink-0 transition-lux">
+      {/* Rodapé da Sidebar: Terminal e Cargo */}
+      <div className="p-3 border-t border-border dark:border-white/10 shrink-0">
+        <div className="px-3 py-2 rounded-xl bg-secondary/30 dark:bg-white/[0.03] border border-border dark:border-white/5 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+            <span className="text-xs font-mono text-muted-foreground">Terminal 01</span>
+          </div>
+          <span className="text-[10px] font-bold uppercase tracking-wider text-primary">
+            {userRole}
+          </span>
+        </div>
+      </div>
+
+    </aside>
+  );
+}
+
+/**
+ * Topbar Enxuta Superior
+ * Posicionada acima do conteúdo principal, com controles rápidos alinhados à direita.
+ */
+export default function Header({
+  activeTab,
+  onAdminClick,
+  onNewClientClick,
+  onProfileClick,
+  userRole,
+  onLogout
+}: HeaderProps) {
+  const tabTitles: Record<string, string> = {
+    dashboard: 'Dashboard Geral',
+    clientes: 'Gestão de Clientes',
+    pacotes: 'Tabela de Pacotes',
+    pdv: 'Ponto de Venda (PDV)',
+    historico: 'Histórico de Vendas',
+    equipe: 'Gestão da Equipe',
+    configuracoes: 'Configurações do Sistema'
+  };
+
+  const profileLabel = userRole === 'operador' ? 'Fotógrafos' : userRole === 'gerente' ? 'Gerente' : 'Dono';
+
+  return (
+    <header className="app-drag-region pt-[38px] pb-3 px-4 xl:px-6 flex items-center justify-between border-b border-border dark:border-white/10 shrink-0 select-none bg-background/80 dark:bg-[#0c0d11]/80 backdrop-blur-md sticky top-0 z-20">
+      
+      {/* Título ou Breadcrumb da aba ativa */}
+      <div className="app-no-drag flex items-center gap-2">
+        <h2 className="text-base font-bold text-foreground tracking-tight">
+          {tabTitles[activeTab] || 'Setland Fotos'}
+        </h2>
+      </div>
+
+      {/* Controles Rápidos alinhados à direita */}
+      <div className="app-no-drag flex items-center gap-2.5 sm:gap-3">
         
-        {/* Botão rápido para o Caixa abrir um novo atendimento */}
-        <button 
+        {/* 1. Botão + Novo Cliente */}
+        <button
           onClick={onNewClientClick}
-          className="app-no-drag flex items-center gap-1.5 xl:gap-2 bg-brand-accent/10 hover:bg-brand-accent/20 text-brand-accent px-3 xl:px-4 py-1.5 xl:py-2 rounded-full font-semibold transition-all text-xs xl:text-sm ml-1"
+          className="app-no-drag flex items-center gap-2 bg-brand-accent hover:opacity-90 text-brand-accent-fg px-3.5 py-2 rounded-xl font-bold transition-lux text-xs shadow-sm gold-glow active:scale-95"
         >
           <UserPlus className="h-4 w-4 shrink-0" />
-          <span className="hidden sm:inline whitespace-nowrap">Novo Cliente</span>
+          <span className="whitespace-nowrap">+ Novo Cliente</span>
         </button>
 
-        <div className="h-6 w-[1px] bg-brand-border-dashed"></div>
+        <div className="h-5 w-[1px] bg-border dark:bg-white/10" />
 
-        {/* Seletor de tema: Claro / Escuro / Sistema */}
+        {/* 2. Seletor de Tema (Claro / Escuro / Sistema) */}
         <ThemeSelector />
 
-        <div className="h-6 w-[1px] bg-brand-border-dashed"></div>
+        <div className="h-5 w-[1px] bg-border dark:bg-white/10" />
 
-        {/* Indicador de Terminal e Controle de Acesso */}
-        <div className="flex items-center gap-2 xl:gap-3 pr-1 xl:pr-2">
-          <div className="flex flex-col items-end justify-center h-full pt-1 hidden sm:flex">
-             <span className="text-[10px] xl:text-sm font-mono tabular-figures text-brand-muted tracking-tight leading-none mb-0.5">
-               Terminal 01
-             </span>
-             {userRole !== 'operador' && (
-               <span className="text-[9px] xl:text-[11px] font-bold text-brand-accent tracking-widest uppercase leading-none">
-                 {userRole}
-               </span>
-             )}
-          </div>
+        {/* 3. Novo Botão de Perfil (Fotógrafos / Gerente / Dono) */}
+        <button
+          onClick={onProfileClick}
+          className="app-no-drag flex items-center gap-2 px-3.5 py-2 rounded-xl border border-border dark:border-white/10 bg-secondary/30 dark:bg-white/[0.04] hover:border-primary/40 text-foreground transition-lux text-xs font-semibold shadow-sm active:scale-95"
+          title={`Abrir perfil (${profileLabel})`}
+        >
           {userRole === 'operador' ? (
-            <button 
-              onClick={onAdminClick}
-              className="app-no-drag p-2 xl:p-2.5 rounded-full text-brand-muted hover:bg-brand-bg hover:text-brand-ink transition-colors flex items-center justify-center border border-transparent"
-              title="Acesso Gerencial"
-            >
-              <Lock className="h-4 w-4" />
-            </button>
+            <Camera className="w-4 h-4 text-primary shrink-0" />
           ) : (
-            <button 
-              onClick={onLogout}
-              className="app-no-drag p-2 xl:p-2.5 rounded-full text-brand-muted hover:bg-brand-danger/10 hover:text-brand-danger transition-colors flex items-center justify-center border border-transparent"
-              title="Sair"
-            >
-              <LogOut className="h-4 w-4" />
-            </button>
+            <Shield className="w-4 h-4 text-amber-500 shrink-0" />
           )}
-        </div>
+          <span className="whitespace-nowrap">{profileLabel}</span>
+        </button>
+
+        {/* 4. Botão rápido de Cadeado / Logout */}
+        {userRole === 'operador' ? (
+          <button
+            onClick={onAdminClick}
+            className="app-no-drag p-2 rounded-xl text-muted-foreground hover:text-foreground hover:bg-secondary/40 transition-colors border border-border dark:border-white/10"
+            title="Elevar para Acesso Gerencial"
+          >
+            <Lock className="h-4 w-4" />
+          </button>
+        ) : (
+          <button
+            onClick={onLogout}
+            className="app-no-drag p-2 rounded-xl text-rose-500 hover:text-rose-600 hover:bg-rose-500/10 transition-colors border border-border dark:border-white/10"
+            title="Encerrar Sessão Gerencial"
+          >
+            <LogOut className="h-4 w-4" />
+          </button>
+        )}
+
       </div>
     </header>
   );

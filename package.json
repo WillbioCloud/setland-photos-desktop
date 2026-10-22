@@ -19,6 +19,7 @@
     "cn": "^0.4.0",
     "date-fns": "^4.4.0",
     "dotenv": "^18.0.3",
+    "electron-updater": "^6.8.9",
     "exceljs": "^4.4.0",
     "googleapis": "^181.0.0",
     "lucide-react": "^1.47.0",
@@ -59,6 +60,13 @@
   "build": {
     "appId": "com.setland.fotos",
     "productName": "Setland Fotos",
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "WillbioCloud",
+        "repo": "setland-photos-desktop"
+      }
+    ],
     "directories": {
       "output": "release"
     },
@@ -84,7 +92,9 @@
       "target": [
         {
           "target": "nsis",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         }
       ],
       "icon": "public/favicon.ico",

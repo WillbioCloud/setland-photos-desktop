@@ -219,9 +219,14 @@ export default function LoginScreen({ onLoginSuccess }: LoginScreenProps) {
           </button>
         </form>
         
-        <div className="mt-8 flex items-center justify-center gap-2 text-xs text-brand-ink/40">
-          <ShieldCheck className="w-4 h-4" />
-          <span>Sessão segura vinculada ao hardware do terminal</span>
+        <div className="mt-8 flex flex-col items-center justify-center gap-1.5 text-xs text-brand-ink/40">
+          <div className="flex items-center gap-2">
+            <ShieldCheck className="w-4 h-4" />
+            <span>Sessão segura vinculada ao hardware do terminal</span>
+          </div>
+          <span className="font-mono text-[11px] text-brand-ink/50">
+            Setland Fotos • v{__APP_VERSION__}
+          </span>
         </div>
       </div>
     </div>

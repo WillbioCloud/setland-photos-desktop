@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Camera, QrCode, CreditCard, Banknote, ShoppingCart, Trash2, ArrowRight, Check } from 'lucide-react';
+import { Camera, QrCode, CreditCard, Banknote, ShoppingCart, Trash2, ArrowRight, Check, Store } from 'lucide-react';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import PrintOrderModal from './PrintOrderModal';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -12,12 +12,12 @@ export default function PDV() {
   const [pendingOrders, setPendingOrders] = useState<any[]>([]);
   const [packages, setPackages] = useState<PackageDef[]>([]);
   const [activeOrder, setActiveOrder] = useState<any | null>(null);
-  const [selectedTerminal, setSelectedTerminal] = useState("Smart POS Stone");
+  const [selectedTerminal, setSelectedTerminal] = useState("Via Lojinha (Balcão)");
   const [isPrintModalOpen, setIsPrintModalOpen] = useState(false);
   const [printModalData, setPrintModalData] = useState<{ clientName: string; photos: any[] }>({ clientName: '', photos: [] });
 
   const loadData = useCallback(async () => {
-    // 1. Busca os pedidos pendentes
+    // 1. Busca os pedidos pendentes e os que aguardam pagamento na lojinha
     const { data: ordersData } = await supabase.from('orders')
       .select(`
         *,
@@ -30,7 +30,7 @@ export default function PDV() {
           )
         )
       `)
-      .eq('status', 'pending')
+      .in('status', ['pending', 'awaiting_store'])
       .order('created_at', { ascending: false });
 
     if (ordersData) setPendingOrders(ordersData);
@@ -142,13 +142,44 @@ export default function PDV() {
   // Extrai o extrato financeiro inteligente do pedido ativo
   const pricingDetail = activeOrder ? calculatePricing(activeOrder.printed_count, activeOrder.digital_count, packages) : null;
 
-  const handleCheckout = async (method: string) => {
+  // 1. Enviar pedido para a Lojinha (Balcão) sem abrir modal bloqueante
+  const handleSendToLojinha = async () => {
     if (!activeOrder) {
       toast.error("Selecione um pedido pendente.");
       return;
     }
 
-    const toastId = toast.loading("Processando venda no balcão...");
+    const toastId = toast.loading("Enviando pedido para a Lojinha...");
+
+    const { error } = await supabase.from('orders').update({
+      payment_method: 'lojinha',
+      status: 'awaiting_store'
+    }).eq('id', activeOrder.id);
+
+    if (error) {
+      console.error("[PDV] Erro ao registrar envio para a Lojinha:", error);
+      toast.error(`Erro ao registrar envio para a Lojinha: ${error.message || 'Falha no banco de dados'}`, { id: toastId });
+      return;
+    }
+
+    const clientName = activeOrder.photo_sessions?.clients?.name || 'Cliente';
+    toast.success(`Pedido de ${clientName} enviado para a Lojinha!`, {
+      id: toastId,
+      description: "O caixa está liberado para o próximo atendimento."
+    });
+
+    setActiveOrder(null);
+    await loadData();
+  };
+
+  // 2. Fluxo completo de conclusão de pagamento e entrega digital / impressão
+  const executeCompleteOrder = async (order: any, method: string) => {
+    if (!order) {
+      toast.error("Nenhum pedido selecionado.");
+      return;
+    }
+
+    const toastId = toast.loading("Processando confirmação de venda...");
 
     const mappedMethod = method === 'cartao' ? 'credit_card' : method;
 
@@ -156,27 +187,29 @@ export default function PDV() {
     const { error } = await supabase.from('orders').update({
       payment_method: mappedMethod,
       status: 'paid'
-    }).eq('id', activeOrder.id);
+    }).eq('id', order.id);
 
     if (error) {
-      toast.error("Erro ao processar venda no banco de dados.", { id: toastId });
+      console.error("[PDV] Erro ao processar venda no banco de dados:", error);
+      toast.error(`Erro ao processar venda no banco de dados: ${error.message || ''}`, { id: toastId });
       return;
     }
 
-    await supabase.from('photo_sessions').update({ status: 'Convertido/Pago' }).eq('id', activeOrder.session_id);
+    await supabase.from('photo_sessions').update({ status: 'Convertido/Pago' }).eq('id', order.session_id);
     toast.success("Pagamento confirmado! O upload para o Drive iniciará em background.", { id: toastId });
 
     // Preserva os dados do pedido em escopo imutável antes de limpar a interface
-    const currentSessionId = activeOrder.session_id;
-    const currentClientName = activeOrder.photo_sessions?.clients?.name || 'Cliente';
-    const currentClientCpf = activeOrder.photo_sessions?.clients?.cpf || '';
-    const currentClientPhone = activeOrder.photo_sessions?.clients?.phone || '';
-    const currentOrderId = activeOrder.id;
-    const currentTotal = activeOrder.total_amount;
-    const currentPricingItems = pricingDetail?.items || [];
+    const currentSessionId = order.session_id;
+    const currentClientName = order.photo_sessions?.clients?.name || 'Cliente';
+    const currentClientCpf = order.photo_sessions?.clients?.cpf || '';
+    const currentClientPhone = order.photo_sessions?.clients?.phone || '';
+    const currentOrderId = order.id;
+    const currentTotal = order.total_amount;
+    const orderPricing = calculatePricing(order.printed_count, order.digital_count, packages);
+    const currentPricingItems = orderPricing?.items || [];
 
     // 1.1 Se o pedido tiver fotos impressas, abre o modal de impressão imediatamente
-    if (activeOrder.printed_count > 0) {
+    if (order.printed_count > 0) {
       const { data: photosToPrint } = await supabase.from('session_photos')
         .select('id, original_name, local_original_path, preview_url')
         .eq('session_id', currentSessionId)
@@ -192,7 +225,9 @@ export default function PDV() {
       }
     }
 
-    setActiveOrder(null);
+    if (activeOrder?.id === order.id) {
+      setActiveOrder(null);
+    }
     loadData();
 
     // 2. Rotina de Upload para o Google Drive em background com Realtime Feedback
@@ -317,6 +352,14 @@ export default function PDV() {
     runBackgroundUpload();
   };
 
+  const handleCheckout = async (method: string) => {
+    if (!activeOrder) {
+      toast.error("Selecione um pedido pendente.");
+      return;
+    }
+    await executeCompleteOrder(activeOrder, method);
+  };
+
   const handleDeletePending = async (orderId: string) => {
     await supabase.from('orders').delete().eq('id', orderId);
     if (activeOrder?.id === orderId) setActiveOrder(null);
@@ -336,44 +379,80 @@ export default function PDV() {
         <CardContent className="flex-1 px-0 pb-6 overflow-y-auto no-scrollbar pr-2 space-y-4">
           {pendingOrders.map(order => {
             const isSelected = activeOrder?.id === order.id;
+            const isAwaitingStore = order.status === 'awaiting_store';
+
             return (
               <Card
                 key={order.id}
-                className={`border transition-lux overflow-hidden flex items-center p-4 gap-4 cursor-pointer bg-card dark:bg-white/[0.03] dark:backdrop-blur-xl hover:shadow-md hover:-translate-y-px ${isSelected ? 'border-primary shadow-md gold-glow ring-1 ring-primary dark:border-brand-accent/60' : 'border-border dark:border-white/10 hover:border-primary/40'}`}
+                className={`border transition-lux overflow-hidden flex items-center p-4 gap-4 cursor-pointer dark:backdrop-blur-xl hover:shadow-md hover:-translate-y-px ${
+                  isAwaitingStore
+                    ? 'border-amber-500 bg-amber-500/10 text-amber-500 shadow-[0_0_20px_rgba(245,158,11,0.18)] ring-1 ring-amber-500/40 hover:border-amber-400'
+                    : isSelected
+                      ? 'border-primary shadow-md gold-glow ring-1 ring-primary dark:border-brand-accent/60 bg-card dark:bg-white/[0.03]'
+                      : 'border-border dark:border-white/10 hover:border-primary/40 bg-card dark:bg-white/[0.03]'
+                }`}
                 onClick={() => !isSelected && setActiveOrder(order)}
               >
-                <div className="w-16 h-16 rounded-xl overflow-hidden bg-muted shrink-0 ring-1 ring-black/5 dark:ring-white/15 shadow-sm">
+                <div className={`w-16 h-16 rounded-xl overflow-hidden bg-muted shrink-0 shadow-sm ${
+                  isAwaitingStore ? 'ring-2 ring-amber-500/50' : 'ring-1 ring-black/5 dark:ring-white/15'
+                }`}>
                   {order.photo_sessions?.cover_photo_url ? (
                     <img src={order.photo_sessions.cover_photo_url.replace(/\\/g, '/')} alt="Cover" className="w-full h-full object-cover" />
                   ) : (
                     <div className="w-full h-full flex items-center justify-center">
-                      <Camera className="w-6 h-6 text-muted-foreground" />
+                      <Camera className={`w-6 h-6 ${isAwaitingStore ? 'text-amber-500' : 'text-muted-foreground'}`} />
                     </div>
                   )}
                 </div>
 
-                <div className="flex-1">
-                  <h3 className="text-base font-bold text-foreground">
+                <div className="flex-1 min-w-0">
+                  {isAwaitingStore && (
+                    <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] xl:text-[11px] font-bold bg-amber-500/20 text-amber-400 border border-amber-500/30 mb-1.5 animate-pulse">
+                      <Store className="w-3 h-3" />
+                      Aguardando Pagamento na Lojinha
+                    </div>
+                  )}
+                  <h3 className="text-base font-bold text-foreground truncate">
                     {order.photo_sessions?.clients?.name || 'Cliente Desconhecido'}
                   </h3>
                   <p className="text-xs text-muted-foreground mt-0.5">Itens do Pedido</p>
-                  <p className="text-sm font-medium mt-1 font-mono tabular-figures">
+                  <p className="text-sm font-medium mt-0.5 font-mono tabular-figures text-foreground/90">
                     {order.printed_count} Impressas • {order.digital_count} Digitais
                   </p>
                 </div>
 
-                <div className="flex flex-col items-end gap-3">
-                  <span className="text-lg font-bold text-foreground font-mono tabular-figures">
+                <div className="flex flex-col items-end gap-2.5 shrink-0">
+                  <span className={`text-lg font-bold font-mono tabular-figures ${
+                    isAwaitingStore ? 'text-amber-400 font-extrabold' : 'text-foreground'
+                  }`}>
                     R$ {Number(order.total_amount).toFixed(2).replace('.', ',')}
                   </span>
 
-                  <button
-                    disabled={isSelected}
-                    className={`px-4 py-2 rounded-xl font-bold transition-lux text-xs shadow-sm flex items-center gap-1.5 active:scale-95 ${isSelected ? 'bg-muted text-muted-foreground cursor-not-allowed border border-border' : 'bg-primary text-primary-foreground hover:opacity-90 gold-glow'}`}
-                  >
-                    {isSelected ? <Check className="w-4 h-4" /> : <ArrowRight className="w-4 h-4" />}
-                    {isSelected ? 'No Carrinho' : 'Atender Cliente'}
-                  </button>
+                  {isAwaitingStore ? (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        executeCompleteOrder(order, 'lojinha');
+                      }}
+                      className="px-3.5 py-2 rounded-xl font-bold transition-lux text-xs shadow-md flex items-center gap-1.5 active:scale-95 bg-emerald-600 hover:bg-emerald-700 text-white"
+                    >
+                      <Check className="w-4 h-4" />
+                      Confirmar Pago
+                    </button>
+                  ) : (
+                    <button
+                      disabled={isSelected}
+                      className={`px-4 py-2 rounded-xl font-bold transition-lux text-xs shadow-sm flex items-center gap-1.5 active:scale-95 ${
+                        isSelected
+                          ? 'bg-muted text-muted-foreground cursor-not-allowed border border-border'
+                          : 'bg-primary text-primary-foreground hover:opacity-90 gold-glow'
+                      }`}
+                    >
+                      {isSelected ? <Check className="w-4 h-4" /> : <ArrowRight className="w-4 h-4" />}
+                      {isSelected ? 'No Carrinho' : 'Atender Cliente'}
+                    </button>
+                  )}
                 </div>
               </Card>
             );
@@ -462,46 +541,80 @@ export default function PDV() {
                   <SelectValue placeholder="Selecione a maquininha" />
                 </SelectTrigger>
                 <SelectContent>
+                  <SelectItem value="Via Lojinha (Balcão)" className="text-xs xl:text-sm font-semibold text-amber-500">
+                    Via Lojinha (Balcão)
+                  </SelectItem>
                   <SelectItem value="Smart POS Stone" className="text-xs xl:text-sm">Smart POS Stone</SelectItem>
                   <SelectItem value="Mercado Pago Point" className="text-xs xl:text-sm">Mercado Pago Point</SelectItem>
                   <SelectItem value="PagSeguro" className="text-xs xl:text-sm">PagSeguro</SelectItem>
                 </SelectContent>
               </Select>
-              <div className="flex items-center gap-2 mt-2 ml-1">
-                <div className="w-1.5 h-1.5 xl:w-2 xl:h-2 rounded-full bg-emerald-500"></div>
-                <span className="text-[10px] xl:text-xs text-muted-foreground">Cobrança Externa (Maquininha Física)</span>
-              </div>
+              {selectedTerminal === "Via Lojinha (Balcão)" ? (
+                <div className="flex items-center gap-2 mt-2 ml-1">
+                  <div className="w-1.5 h-1.5 xl:w-2 xl:h-2 rounded-full bg-amber-500 animate-pulse"></div>
+                  <span className="text-[10px] xl:text-xs text-amber-500 font-medium">Cobrança no caixa da lojinha física</span>
+                </div>
+              ) : (
+                <div className="flex items-center gap-2 mt-2 ml-1">
+                  <div className="w-1.5 h-1.5 xl:w-2 xl:h-2 rounded-full bg-emerald-500"></div>
+                  <span className="text-[10px] xl:text-xs text-muted-foreground">Cobrança Externa (Maquininha Física)</span>
+                </div>
+              )}
             </div>
 
-            <div>
-              <button
-                onClick={() => handleCheckout('pix')}
-                disabled={!activeOrder}
-                className="w-full mb-1.5 xl:mb-2 flex items-center justify-center gap-2 bg-primary hover:opacity-90 disabled:opacity-50 disabled:shadow-none text-primary-foreground px-4 py-2.5 xl:py-3 rounded-xl font-bold transition-lux active:scale-[0.98] text-xs xl:text-sm shadow-sm gold-glow"
-              >
-                <QrCode className="h-3.5 w-3.5 xl:h-4 xl:w-4" />
-                Pagar com Pix
-              </button>
-
-              <div className="grid grid-cols-2 gap-2">
-                <button
-                  onClick={() => handleCheckout('cartao')}
-                  disabled={!activeOrder}
-                  className="flex items-center justify-center gap-1.5 xl:gap-2 bg-card dark:bg-white/[0.05] hover:bg-background dark:hover:bg-white/[0.09] disabled:opacity-50 border border-border dark:border-white/10 text-foreground px-3 xl:px-4 py-2 xl:py-2.5 rounded-xl font-medium transition-lux active:scale-[0.98] text-[10px] xl:text-xs shadow-sm"
-                >
-                  <CreditCard className="h-3.5 w-3.5 xl:h-4 xl:w-4" />
-                  Cartão
-                </button>
-                <button
-                  onClick={() => handleCheckout('dinheiro')}
-                  disabled={!activeOrder}
-                  className="flex items-center justify-center gap-1.5 xl:gap-2 bg-card dark:bg-white/[0.05] hover:bg-background dark:hover:bg-white/[0.09] disabled:opacity-50 border border-border dark:border-white/10 text-foreground px-3 xl:px-4 py-2 xl:py-2.5 rounded-xl font-medium transition-lux active:scale-[0.98] text-[10px] xl:text-xs shadow-sm"
-                >
-                  <Banknote className="h-3.5 w-3.5 xl:h-4 xl:w-4" />
-                  Dinheiro
-                </button>
+            {selectedTerminal === "Via Lojinha (Balcão)" ? (
+              <div>
+                {activeOrder?.status === 'awaiting_store' ? (
+                  <button
+                    onClick={() => executeCompleteOrder(activeOrder, 'lojinha')}
+                    disabled={!activeOrder}
+                    className="w-full flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white px-4 py-3 rounded-xl font-bold transition-lux active:scale-[0.98] text-xs xl:text-sm shadow-md"
+                  >
+                    <Check className="h-4 w-4" />
+                    Confirmar Pagamento Recebido (Lojinha)
+                  </button>
+                ) : (
+                  <button
+                    onClick={handleSendToLojinha}
+                    disabled={!activeOrder}
+                    className="w-full flex items-center justify-center gap-2 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 disabled:opacity-50 text-slate-950 font-bold px-4 py-3 rounded-xl transition-lux active:scale-[0.98] text-xs xl:text-sm shadow-lg shadow-amber-500/20"
+                  >
+                    <Store className="h-4 w-4 text-slate-950" />
+                    Efetuar Pagamento (Enviar p/ Lojinha)
+                  </button>
+                )}
               </div>
-            </div>
+            ) : (
+              <div>
+                <button
+                  onClick={() => handleCheckout('pix')}
+                  disabled={!activeOrder}
+                  className="w-full mb-1.5 xl:mb-2 flex items-center justify-center gap-2 bg-primary hover:opacity-90 disabled:opacity-50 disabled:shadow-none text-primary-foreground px-4 py-2.5 xl:py-3 rounded-xl font-bold transition-lux active:scale-[0.98] text-xs xl:text-sm shadow-sm gold-glow"
+                >
+                  <QrCode className="h-3.5 w-3.5 xl:h-4 xl:w-4" />
+                  Pagar com Pix
+                </button>
+
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    onClick={() => handleCheckout('cartao')}
+                    disabled={!activeOrder}
+                    className="flex items-center justify-center gap-1.5 xl:gap-2 bg-card dark:bg-white/[0.05] hover:bg-background dark:hover:bg-white/[0.09] disabled:opacity-50 border border-border dark:border-white/10 text-foreground px-3 xl:px-4 py-2 xl:py-2.5 rounded-xl font-medium transition-lux active:scale-[0.98] text-[10px] xl:text-xs shadow-sm"
+                  >
+                    <CreditCard className="h-3.5 w-3.5 xl:h-4 xl:w-4" />
+                    Cartão
+                  </button>
+                  <button
+                    onClick={() => handleCheckout('dinheiro')}
+                    disabled={!activeOrder}
+                    className="flex items-center justify-center gap-1.5 xl:gap-2 bg-card dark:bg-white/[0.05] hover:bg-background dark:hover:bg-white/[0.09] disabled:opacity-50 border border-border dark:border-white/10 text-foreground px-3 xl:px-4 py-2 xl:py-2.5 rounded-xl font-medium transition-lux active:scale-[0.98] text-[10px] xl:text-xs shadow-sm"
+                  >
+                    <Banknote className="h-3.5 w-3.5 xl:h-4 xl:w-4" />
+                    Dinheiro
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
 
         </Card>

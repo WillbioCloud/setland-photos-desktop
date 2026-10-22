@@ -7,8 +7,37 @@ import { createClient } from '@supabase/supabase-js';
 import { processSingleImage } from './imageProcessor';
 import { createClientFolder, uploadPhoto } from './driveService';
 import dotenv from 'dotenv';
+import { autoUpdater } from 'electron-updater';
 
 dotenv.config();
+
+// Configuração do Auto-Updater (GitHub Releases)
+autoUpdater.autoDownload = false;
+autoUpdater.autoInstallOnAppQuit = true;
+
+autoUpdater.on('update-available', (info) => {
+  console.log('[AutoUpdater] Nova atualização detectada:', info.version);
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('updater:available', info);
+  }
+});
+
+autoUpdater.on('download-progress', (progressObj) => {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('updater:progress', progressObj);
+  }
+});
+
+autoUpdater.on('update-downloaded', (info) => {
+  console.log('[AutoUpdater] Atualização baixada com sucesso:', info.version);
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('updater:downloaded', info);
+  }
+});
+
+autoUpdater.on('error', (err) => {
+  console.error('[AutoUpdater] Erro no auto-updater:', err);
+});
 
 // 1. Recria as variáveis globais de diretório para ES Modules
 const __filename = fileURLToPath(import.meta.url);
@@ -506,7 +535,7 @@ app.whenReady().then(() => {
   // 2. Disparo silencioso de lote de fotos para o driver térmico
   ipcMain.handle('printer:printPhotos', async (event, payload) => {
     try {
-      const { photos, printerName } = payload;
+      const { photos, printerName, copies = 1, orientation = 'auto' } = payload || {};
       if (!photos || photos.length === 0) {
         return { success: false, message: 'Nenhuma foto recebida para impressão.' };
       }
@@ -523,20 +552,29 @@ app.whenReady().then(() => {
         targetPrinter = printers.find(p => p.isDefault)?.name || printers[0]?.name;
       }
 
+      // Multiplica as fotos pela quantidade de cópias configurada
+      const numCopies = Math.max(1, Number(copies) || 1);
+      const queuePhotos: any[] = [];
+      for (const photo of photos) {
+        for (let c = 0; c < numCopies; c++) {
+          queuePhotos.push(photo);
+        }
+      }
+
       // Fallback gracioso para ambiente de desenvolvimento sem impressoras conectadas
       if (!targetPrinter) {
         console.log('Nenhuma impressora detectada no Windows. Concluindo em modo simulado.');
         return {
           success: true,
-          count: photos.length,
-          total: photos.length,
+          count: queuePhotos.length,
+          total: queuePhotos.length,
           printerUsed: 'Modo Simulado (Sem impressora conectada)'
         };
       }
 
       let printedCount = 0;
 
-      for (const photo of photos) {
+      for (const photo of queuePhotos) {
         let rawPath = photo.local_original_path 
           ? decodeURIComponent(photo.local_original_path.replace(/^file:\/\/\//, ''))
           : '';
@@ -561,7 +599,12 @@ app.whenReady().then(() => {
           });
 
           sharp(rawPath).metadata().then((meta) => {
-            const isLandscape = (meta.width || 0) > (meta.height || 0);
+            const isLandscape = orientation === 'landscape'
+              ? true
+              : orientation === 'portrait'
+                ? false
+                : (meta.width || 0) > (meta.height || 0);
+
             const fileUrl = 'file:///' + rawPath.replace(/\\/g, '/');
 
             const htmlContent = `
@@ -608,8 +651,8 @@ app.whenReady().then(() => {
 
       return { 
         success: true, 
-        count: printedCount > 0 ? printedCount : photos.length, 
-        total: photos.length, 
+        count: printedCount > 0 ? printedCount : queuePhotos.length, 
+        total: queuePhotos.length, 
         printerUsed: targetPrinter 
       };
     } catch (err: any) {
@@ -737,4 +780,38 @@ app.whenReady().then(() => {
       return { success: false, error: err.message };
     }
   });
+
+  // Handlers do Auto-Updater
+  ipcMain.handle('updater:startDownload', async () => {
+    try {
+      console.log('[AutoUpdater] Iniciando download da atualização...');
+      return await autoUpdater.downloadUpdate();
+    } catch (err: any) {
+      console.error('[AutoUpdater] Falha ao baixar atualização:', err);
+      throw err;
+    }
+  });
+
+  ipcMain.handle('updater:quitAndInstall', () => {
+    console.log('[AutoUpdater] Reiniciando aplicativo para aplicar atualização...');
+    autoUpdater.quitAndInstall();
+  });
+
+  ipcMain.handle('updater:checkForUpdates', async () => {
+    try {
+      return await autoUpdater.checkForUpdates();
+    } catch (err: any) {
+      console.warn('[AutoUpdater] Erro ao checar atualizações:', err);
+      throw err;
+    }
+  });
+
+  // Checagem automática apenas quando o app estiver empacotado em produção
+  if (app.isPackaged) {
+    setTimeout(() => {
+      autoUpdater.checkForUpdates().catch((err) => {
+        console.warn('[AutoUpdater] Falha na checagem automática inicial:', err);
+      });
+    }, 4000);
+  }
 });

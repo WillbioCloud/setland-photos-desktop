@@ -4,6 +4,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table';
 import { toast } from "sonner";
 import { supabase } from '@/lib/supabaseClient';
+import { findOnlineOrderSession, indexSessionsByClient, type SessionRow } from '@/lib/reporting';
 
 const filters = ['Todos', 'Hoje', 'Ontem', 'Últimos 7 dias'];
 
@@ -15,12 +16,13 @@ export default function Historico() {
   useEffect(() => {
     async function loadHistory() {
       try {
-        const [ { data: ordersData }, { data: onlineOrdersData } ] = await Promise.all([
+        const [ { data: ordersData }, { data: onlineOrdersData }, { data: sessionsData } ] = await Promise.all([
           supabase
             .from('orders')
             .select(`
               *,
               photo_sessions (
+                photographer_name,
                 clients (
                   name,
                   phone
@@ -31,7 +33,10 @@ export default function Historico() {
           supabase
             .from('online_orders')
             .select('*')
-            .neq('payment_status', 'pending')
+            .neq('payment_status', 'pending'),
+          supabase
+            .from('photo_sessions')
+            .select('id, client_id, client_name, photographer_name, created_at')
         ]);
 
         const pdvFormatted = (ordersData || []).map(order => ({
@@ -39,6 +44,7 @@ export default function Historico() {
           displayId: order.id.split('-')[0].toUpperCase(),
           clientName: order.photo_sessions?.clients?.name || 'Cliente Desconhecido',
           phone: order.photo_sessions?.clients?.phone || '--',
+          photographer: order.photo_sessions?.photographer_name || order.photographer_name || 'Equipe',
           items: 'Pacote de Fotos',
           total: Number(order.total_amount) || 0,
           method: order.payment_method || 'indefinido',
@@ -47,18 +53,43 @@ export default function Historico() {
           source: 'PDV'
         }));
 
-        const onlineFormatted = (onlineOrdersData || []).map(order => ({
-          id: order.id,
-          displayId: order.id.split('-')[0].toUpperCase(),
-          clientName: order.client_name || 'Cliente Desconhecido',
-          phone: order.client_phone || '--',
-          items: order.package_name || 'Venda Online',
-          total: Number(order.total_amount) || 0,
-          method: 'Online',
-          date: new Date(order.created_at).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' }),
-          rawDate: new Date(order.created_at),
-          source: 'Site'
-        }));
+        const sessions = (sessionsData || []) as SessionRow[];
+        const sessionById = new Map(sessions.map(s => [s.id, s]));
+        const sessionsByClient = indexSessionsByClient(sessions);
+
+        const onlineFormatted = (onlineOrdersData || []).map(order => {
+          const rawM = String(order.payment_method || '').toLowerCase();
+          const methodLabel = rawM.includes('pix')
+            ? 'PIX (Site)'
+            : rawM.includes('card') || rawM.includes('cart') || rawM.includes('credit')
+            ? 'Cartão (Site)'
+            : order.payment_method || 'Online (Site)';
+
+          const sess =
+            findOnlineOrderSession(order, sessionsByClient, sessionById) ||
+            sessions.find(
+              (s) =>
+                s.client_name &&
+                order.client_name &&
+                s.client_name.trim().toLowerCase() === order.client_name.trim().toLowerCase()
+            ) ||
+            null;
+          const photographer = sess?.photographer_name || 'Equipe';
+
+          return {
+            id: order.id,
+            displayId: order.id.split('-')[0].toUpperCase(),
+            clientName: order.client_name || 'Cliente Desconhecido',
+            phone: order.client_phone || '--',
+            photographer,
+            items: order.package_name || 'Venda Online',
+            total: Number(order.total_amount) || 0,
+            method: methodLabel,
+            date: new Date(order.created_at).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' }),
+            rawDate: new Date(order.created_at),
+            source: 'Site'
+          };
+        });
 
         const combined = [...pdvFormatted, ...onlineFormatted].sort((a, b) => b.rawDate.getTime() - a.rawDate.getTime());
         setHistory(combined);
@@ -187,12 +218,19 @@ export default function Historico() {
                     </TableCell>
                     <TableCell className="px-6 py-5 align-middle">
                       <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 rounded-full bg-primary/10 text-primary flex items-center justify-center font-bold text-sm border border-primary/20">
+                        <div className="w-10 h-10 rounded-full bg-primary/10 text-primary flex items-center justify-center font-bold text-sm border border-primary/20 shrink-0">
                           {getInitials(order.clientName)}
                         </div>
-                        <div>
-                          <p className="font-semibold text-foreground text-sm">{order.clientName}</p>
-                          <p className="text-xs text-muted-foreground font-mono mt-0.5">{order.phone}</p>
+                        <div className="min-w-0">
+                          <p className="font-semibold text-foreground text-sm truncate">{order.clientName}</p>
+                          <div className="flex flex-wrap items-center gap-2 mt-0.5">
+                            <span className="text-xs text-muted-foreground font-mono">{order.phone}</span>
+                            {order.photographer && (
+                              <span className="text-[10px] px-1.5 py-0.5 rounded bg-primary/10 text-primary font-medium border border-primary/20 flex items-center gap-1">
+                                📸 {order.photographer}
+                              </span>
+                            )}
+                          </div>
                         </div>
                       </div>
                     </TableCell>
@@ -201,13 +239,18 @@ export default function Historico() {
                       <p className="text-xs text-muted-foreground/70 mt-0.5">{order.date}</p>
                     </TableCell>
                     <TableCell className="px-6 py-5 align-middle">
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2.5">
                         <div className="p-1.5 bg-background rounded-lg border border-border shadow-sm">
                           {renderMethodIcon(order.method)}
                         </div>
-                        <span className="font-mono font-bold text-foreground text-sm">
-                          R$ {order.total.toFixed(2).replace('.', ',')}
-                        </span>
+                        <div>
+                          <span className="font-mono font-bold text-foreground text-sm block">
+                            R$ {order.total.toFixed(2).replace('.', ',')}
+                          </span>
+                          <span className="text-[10px] text-muted-foreground font-medium uppercase tracking-wider">
+                            {order.method === 'credit_card' ? 'Cartão' : order.method === 'lojinha' ? 'Via Lojinha' : order.method}
+                          </span>
+                        </div>
                       </div>
                     </TableCell>
                     <TableCell className="px-6 py-5 align-middle text-right">

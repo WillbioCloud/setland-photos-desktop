@@ -243,6 +243,9 @@ const PAYMENT_METHOD_LABELS: Record<string, string> = {
   dinheiro: 'Dinheiro',
   money: 'Dinheiro',
   online: 'Online (Site)',
+  site_pix: 'PIX (Site)',
+  site_card: 'Cartão (Site)',
+  lojinha: 'Via Lojinha',
   indefinido: 'Não informado',
 };
 
@@ -311,6 +314,7 @@ export interface SessionRow {
   photographer_id?: string | null;
   photographer_name?: string | null;
   status?: string | null;
+  drive_status?: string | null;
 }
 
 export interface OrderRow {
@@ -329,13 +333,13 @@ export interface OnlineOrderRow {
   id: string;
   created_at?: string | null;
   client_id?: string | null;
-  /** Vínculo direto com a sessão (quando o portal grava a referência). */
   session_id?: string | null;
   client_name?: string | null;
   client_phone?: string | null;
   total_amount?: number | string | null;
   package_name?: string | null;
   payment_status?: string | null;
+  payment_method?: string | null;
 }
 
 export interface AnalyticsDataset {
@@ -519,7 +523,15 @@ export function summarizeDataset(dataset: AnalyticsDataset, range: DateRange): R
   };
 
   for (const order of scoped.orders) accumulate(order.payment_method, toNumber(order.total_amount));
-  for (const order of scoped.onlineOrders) accumulate('online', toNumber(order.total_amount));
+  for (const order of scoped.onlineOrders) {
+    const rawMethod = normalizeStatus(order.payment_method);
+    const resolvedMethod = rawMethod.includes('pix')
+      ? 'site_pix'
+      : rawMethod.includes('card') || rawMethod.includes('cart') || rawMethod.includes('credit')
+      ? 'site_card'
+      : order.payment_method || 'online';
+    accumulate(resolvedMethod, toNumber(order.total_amount));
+  }
 
   const paymentBreakdown = Array.from(buckets.values())
     .map((bucket) => ({

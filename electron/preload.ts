@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron';
 
-contextBridge.exposeInMainWorld('electronAPI', {
+const api = {
   selectFiles: () => ipcRenderer.invoke('dialog:selectFiles'),
   processAndUpload: (payload: {
     filePaths: string[];
@@ -28,5 +28,28 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Abre links de WhatsApp / Drive / vitrine no navegador padrão do sistema operacional
   openExternal: (url: string) => ipcRenderer.invoke('shell:openExternal', url),
   deleteLocalSessionDir: (localCacheDir: string) => 
-    ipcRenderer.invoke('photos:deleteLocalSessionDir', localCacheDir)
-});
+    ipcRenderer.invoke('photos:deleteLocalSessionDir', localCacheDir),
+
+  // Auto-Updater (GitHub Releases)
+  onUpdateAvailable: (callback: (info: any) => void) => {
+    const listener = (_: any, info: any) => callback(info);
+    ipcRenderer.on('updater:available', listener);
+    return () => ipcRenderer.removeListener('updater:available', listener);
+  },
+  onUpdateProgress: (callback: (progress: any) => void) => {
+    const listener = (_: any, progress: any) => callback(progress);
+    ipcRenderer.on('updater:progress', listener);
+    return () => ipcRenderer.removeListener('updater:progress', listener);
+  },
+  onUpdateDownloaded: (callback: (info: any) => void) => {
+    const listener = (_: any, info: any) => callback(info);
+    ipcRenderer.on('updater:downloaded', listener);
+    return () => ipcRenderer.removeListener('updater:downloaded', listener);
+  },
+  startUpdateDownload: () => ipcRenderer.invoke('updater:startDownload'),
+  quitAndInstall: () => ipcRenderer.invoke('updater:quitAndInstall'),
+  checkForUpdates: () => ipcRenderer.invoke('updater:checkForUpdates'),
+};
+
+contextBridge.exposeInMainWorld('electronAPI', api);
+contextBridge.exposeInMainWorld('electron', api);

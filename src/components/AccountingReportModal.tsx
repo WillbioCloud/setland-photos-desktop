@@ -157,8 +157,10 @@ export function buildAccountingEntries(
         clientCpf: session?.client_cpf || '',
         clientPhone: order.client_phone || session?.client_phone || '',
         description: order.package_name || 'Venda Online',
-        method: 'online',
-        methodLabel: paymentMethodLabel('online'),
+        method: order.payment_method || 'online',
+        methodLabel: order.payment_method
+          ? `${paymentMethodLabel(order.payment_method)} (Site)`
+          : paymentMethodLabel('online'),
         total: toNumber(order.total_amount),
       };
     });
