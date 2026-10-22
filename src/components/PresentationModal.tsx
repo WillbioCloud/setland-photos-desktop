@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { CheckCircle2 } from 'lucide-react';
+import { CheckCircle2, Move, Sparkles } from 'lucide-react';
 import { toast } from "sonner";
 import watermarkLogo from '../assets/watermark_setland.png';
 
@@ -12,6 +12,8 @@ interface PresentationModalProps {
   onConfirmSelection?: () => void;
 }
 
+type WatermarkPreset = 'br' | 'bl' | 'tr' | 'tl' | 'center' | 'custom';
+
 export default function PresentationModal({
   isOpen,
   onClose,
@@ -22,9 +24,19 @@ export default function PresentationModal({
 }: PresentationModalProps) {
   const [currentIndex, setCurrentIndex] = useState(0);
   const [showWatermark, setShowWatermark] = useState(true);
-  const [watermarkPos, setWatermarkPos] = useState<'br' | 'bl' | 'tr' | 'tl' | 'center'>('br');
+  const [watermarkPreset, setWatermarkPreset] = useState<WatermarkPreset>('br');
   const [showUI, setShowUI] = useState(true);
 
+  // Orientação e dimensões da foto atual
+  const [isPortrait, setIsPortrait] = useState(false);
+  
+  // Posição livre via Drag & Drop (em porcentagem 0-100% do container da foto)
+  const [customPos, setCustomPos] = useState<{ xPercent: number; yPercent: number }>({ xPercent: 78, yPercent: 82 });
+  const [isDragging, setIsDragging] = useState(false);
+
+  const containerRef = useRef<HTMLDivElement>(null);
+  const watermarkRef = useRef<HTMLDivElement>(null);
+  const dragStartRef = useRef<{ mouseX: number; mouseY: number; startX: number; startY: number } | null>(null);
   const timeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   const handleMouseMove = useCallback(() => {
@@ -32,13 +44,13 @@ export default function PresentationModal({
     if (timeoutRef.current) clearTimeout(timeoutRef.current);
     timeoutRef.current = setTimeout(() => {
       setShowUI(false);
-    }, 3000);
+    }, 3500);
   }, []);
 
   useEffect(() => {
     if (isOpen) {
       window.addEventListener('mousemove', handleMouseMove);
-      handleMouseMove(); // trigger initial state
+      handleMouseMove();
       return () => {
         window.removeEventListener('mousemove', handleMouseMove);
         if (timeoutRef.current) clearTimeout(timeoutRef.current);
@@ -46,12 +58,18 @@ export default function PresentationModal({
     }
   }, [isOpen, handleMouseMove]);
 
+  // Detecta proporção real da imagem ao carregar
+  const handleImageLoad = (e: React.SyntheticEvent<HTMLImageElement>) => {
+    const { naturalWidth, naturalHeight } = e.currentTarget;
+    setIsPortrait(naturalHeight > naturalWidth);
+  };
+
+  // Ciclo de navegação e atalhos de teclado
   useEffect(() => {
     if (!isOpen) return;
 
     const handleKeyDown = (e: KeyboardEvent) => {
-      e.stopPropagation(); // Evita que atalhos vazem (ex: Enter abrindo Novo Cliente)
-      setShowUI(false); // hide immediately
+      e.stopPropagation();
 
       switch (e.key) {
         case 'ArrowRight':
@@ -77,13 +95,14 @@ export default function PresentationModal({
           break;
         case 'p':
         case 'P':
-          setWatermarkPos(prev => {
-            const nextMap: Record<string, 'br' | 'bl' | 'tr' | 'tl' | 'center'> = {
+          setWatermarkPreset(prev => {
+            const nextMap: Record<WatermarkPreset, WatermarkPreset> = {
               br: 'bl',
               bl: 'tl',
               tl: 'tr',
               tr: 'center',
-              center: 'br'
+              center: 'br',
+              custom: 'br'
             };
             return nextMap[prev];
           });
@@ -98,76 +117,209 @@ export default function PresentationModal({
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isOpen, currentIndex, photos, togglePhoto, onClose]);
+  }, [isOpen, currentIndex, photos, togglePhoto, onClose, selectedPhotos, onConfirmSelection]);
 
-  // Reseta o index ao abrir
   useEffect(() => {
     if (isOpen) {
       setCurrentIndex(0);
     }
   }, [isOpen]);
 
+  // Lógica de Drag & Drop da Marca d'Água estritamente dentro da foto
+  const handleMouseDown = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+
+    if (!containerRef.current || !watermarkRef.current) return;
+
+    const containerRect = containerRef.current.getBoundingClientRect();
+    const watermarkRect = watermarkRef.current.getBoundingClientRect();
+
+    dragStartRef.current = {
+      mouseX: e.clientX,
+      mouseY: e.clientY,
+      startX: watermarkRect.left - containerRect.left,
+      startY: watermarkRect.top - containerRect.top
+    };
+
+    setIsDragging(true);
+
+    const handleWindowMouseMove = (moveEvent: MouseEvent) => {
+      if (!dragStartRef.current || !containerRef.current || !watermarkRef.current) return;
+
+      const cRect = containerRef.current.getBoundingClientRect();
+      const wRect = watermarkRef.current.getBoundingClientRect();
+
+      const deltaX = moveEvent.clientX - dragStartRef.current.mouseX;
+      const deltaY = moveEvent.clientY - dragStartRef.current.mouseY;
+
+      const rawX = dragStartRef.current.startX + deltaX;
+      const rawY = dragStartRef.current.startY + deltaY;
+
+      // Trava para NUNCA sair do frame da foto
+      const maxX = cRect.width - wRect.width;
+      const maxY = cRect.height - wRect.height;
+
+      const clampedX = Math.max(0, Math.min(rawX, maxX));
+      const clampedY = Math.max(0, Math.min(rawY, maxY));
+
+      setCustomPos({
+        xPercent: (clampedX / cRect.width) * 100,
+        yPercent: (clampedY / cRect.height) * 100
+      });
+      setWatermarkPreset('custom');
+    };
+
+    const handleWindowMouseUp = () => {
+      setIsDragging(false);
+      dragStartRef.current = null;
+      window.removeEventListener('mousemove', handleWindowMouseMove);
+      window.removeEventListener('mouseup', handleWindowMouseUp);
+    };
+
+    window.addEventListener('mousemove', handleWindowMouseMove);
+    window.addEventListener('mouseup', handleWindowMouseUp);
+  };
+
   if (!isOpen || photos.length === 0) return null;
 
   const currentPhoto = photos[currentIndex];
   const isSelected = selectedPhotos.includes(currentPhoto.id);
 
-  const watermarkClasses = {
-    br: 'bottom-8 right-8',
-    bl: 'bottom-8 left-8',
-    tr: 'top-8 right-8',
-    tl: 'top-8 left-8',
-    center: 'top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2'
+  // Calcula classe de posicionamento caso seja preset ou estilo inline caso seja custom
+  const getWatermarkPositionStyle = (): { className: string; style?: React.CSSProperties } => {
+    if (watermarkPreset === 'custom') {
+      return {
+        className: 'absolute',
+        style: {
+          left: `${customPos.xPercent}%`,
+          top: `${customPos.yPercent}%`
+        }
+      };
+    }
+
+    const presetClasses: Record<Exclude<WatermarkPreset, 'custom'>, string> = {
+      br: 'bottom-4 right-4 sm:bottom-6 sm:right-6',
+      bl: 'bottom-4 left-4 sm:bottom-6 sm:left-6',
+      tr: 'top-4 right-4 sm:top-6 sm:right-6',
+      tl: 'top-4 left-4 sm:top-6 sm:left-6',
+      center: 'top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2'
+    };
+
+    return { className: `absolute ${presetClasses[watermarkPreset]}` };
   };
 
+  const { className: watermarkPosClass, style: watermarkPosStyle } = getWatermarkPositionStyle();
+
   return (
-    <div id="presentation-modal" className="fixed inset-0 z-[60] bg-black flex items-center justify-center select-none overflow-hidden">
-      
-      <img 
-        src={currentPhoto.url} 
-        alt="Foto da Sessão" 
-        className="max-h-screen max-w-full object-contain transition-transform duration-300"
-      />
-
-      {isSelected && (
-        <CheckCircle2 className="absolute top-8 left-8 text-emerald-500 h-16 w-16 bg-black/50 rounded-full" />
-      )}
-
-      {showWatermark && (
+    <div 
+      id="presentation-modal" 
+      className="fixed inset-0 z-[60] bg-black flex items-center justify-center select-none overflow-hidden"
+    >
+      {/* 
+        Container Relativo Físico da Foto:
+        Usa inline-block e auto para ter EXATAMENTE as dimensões da imagem renderizada.
+        A parte preta do monitor fica do lado de fora deste elemento.
+      */}
+      <div 
+        ref={containerRef}
+        className="relative inline-block max-w-full max-h-screen select-none overflow-hidden"
+      >
         <img 
-          src={watermarkLogo} 
-          alt="Watermark" 
-          className={`absolute w-32 md:w-48 opacity-80 pointer-events-none transition-all duration-300 ${watermarkClasses[watermarkPos]}`} 
+          src={currentPhoto.url} 
+          alt="Foto da Sessão" 
+          onLoad={handleImageLoad}
+          className="max-h-screen max-w-full w-auto h-auto block select-none pointer-events-none object-contain"
         />
-      )}
 
-      <div className={`absolute bottom-8 transition-opacity duration-500 ${showUI ? 'opacity-100' : 'opacity-0'}`}>
-        <div className="bg-black/80 backdrop-blur border border-white/10 rounded-full px-6 py-3 flex gap-6 text-white text-sm items-center">
-          <div><kbd className="px-2 py-1 bg-white/20 rounded-md font-mono text-xs text-white mx-1">←</kbd><kbd className="px-2 py-1 bg-white/20 rounded-md font-mono text-xs text-white mx-1">→</kbd> Navegar</div>
-          <div><kbd className="px-2 py-1 bg-white/20 rounded-md font-mono text-xs text-white mx-1">Enter</kbd> Selecionar</div>
-          <div><kbd className="px-2 py-1 bg-white/20 rounded-md font-mono text-xs text-white mx-1">M</kbd> Marca d'água</div>
-          <div><kbd className="px-2 py-1 bg-white/20 rounded-md font-mono text-xs text-white mx-1">P</kbd> Posição</div>
-          <div><kbd className="px-2 py-1 bg-white/20 rounded-md font-mono text-xs text-white mx-1">Esc</kbd> Sair</div>
+        {/* Selo verde de seleção dentro do enquadramento da foto */}
+        {isSelected && (
+          <div className="absolute top-4 left-4 flex items-center gap-2 bg-emerald-600/90 text-white text-xs font-bold px-3 py-1.5 rounded-full backdrop-blur-md shadow-lg border border-white/20 animate-in zoom-in-75 duration-150">
+            <CheckCircle2 className="h-4 w-4" />
+            <span>Selecionada</span>
+          </div>
+        )}
+
+        {/* Marca d'Água Interativa Presa Dentro da Foto */}
+        {showWatermark && (
+          <div
+            ref={watermarkRef}
+            onMouseDown={handleMouseDown}
+            style={watermarkPosStyle}
+            title="Arraste para mover pela foto"
+            className={`group ${watermarkPosClass} z-20 cursor-grab active:cursor-grabbing transition-opacity select-none ${
+              isDragging ? 'opacity-100 scale-105' : 'opacity-85 hover:opacity-100'
+            }`}
+          >
+            <div className="relative flex items-center justify-center p-1 rounded-xl group-hover:ring-2 group-hover:ring-primary/60 group-hover:bg-black/30 backdrop-blur-[2px] transition-all">
+              <img 
+                src={watermarkLogo} 
+                alt="Watermark Setland" 
+                className={`object-contain pointer-events-none drop-shadow-[0_2px_10px_rgba(0,0,0,0.8)] ${
+                  isPortrait ? 'w-24 sm:w-36 md:w-44' : 'w-32 sm:w-48 md:w-56'
+                }`} 
+              />
+              <div className="absolute -top-2 -right-2 opacity-0 group-hover:opacity-100 bg-black/80 text-white rounded-full p-1 shadow transition-opacity">
+                <Move className="w-3 h-3 text-primary" />
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Barra de Controles Inferior */}
+      <div className={`absolute bottom-6 transition-opacity duration-500 z-30 ${showUI ? 'opacity-100' : 'opacity-0'}`}>
+        <div className="bg-black/85 backdrop-blur-md border border-white/10 rounded-full px-5 py-2.5 flex flex-wrap gap-4 text-white text-xs items-center shadow-2xl">
           
-          <div className="w-px h-6 bg-white/20 mx-2"></div>
-          
+          {/* Badge de Orientação Detectada */}
+          <div className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-white/10 font-mono text-[10px] uppercase font-bold tracking-wider text-primary border border-white/10">
+            <Sparkles className="w-3 h-3" />
+            {isPortrait ? 'Retrato (Vertical)' : 'Paisagem (Horizontal)'}
+          </div>
+
+          <div className="flex items-center gap-1">
+            <kbd className="px-1.5 py-0.5 bg-white/20 rounded font-mono text-[10px]">←</kbd>
+            <kbd className="px-1.5 py-0.5 bg-white/20 rounded font-mono text-[10px]">→</kbd> Navegar ({currentIndex + 1}/{photos.length})
+          </div>
+
+          <div className="flex items-center gap-1">
+            <kbd className="px-1.5 py-0.5 bg-white/20 rounded font-mono text-[10px]">Enter</kbd> {isSelected ? 'Desmarcar' : 'Selecionar'}
+          </div>
+
+          <div className="flex items-center gap-1">
+            <kbd className="px-1.5 py-0.5 bg-white/20 rounded font-mono text-[10px]">M</kbd> Marca d&apos;água: <strong>{showWatermark ? 'Ligada' : 'Desligada'}</strong>
+          </div>
+
+          <div className="flex items-center gap-1">
+            <kbd className="px-1.5 py-0.5 bg-white/20 rounded font-mono text-[10px]">P</kbd> Posição: <span className="uppercase font-mono text-primary font-bold">{watermarkPreset}</span>
+          </div>
+
+          <div className="hidden sm:inline text-white/50 text-[11px]">
+            🖱️ Arraste a logo livremente
+          </div>
+
+          <div className="w-px h-4 bg-white/20"></div>
+
           {selectedPhotos.length > 0 ? (
             <button 
               onClick={onConfirmSelection}
-              className="px-4 py-1.5 bg-emerald-500 text-white rounded-full font-medium hover:bg-emerald-600 transition-colors flex items-center gap-2 shadow-lg"
+              className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-full font-bold transition-all flex items-center gap-1.5 shadow-lg active:scale-95 text-xs"
             >
-              <kbd className="px-2 py-0.5 bg-black/20 rounded-md font-mono text-xs">C</kbd> 
+              <kbd className="px-1.5 py-0.2 bg-black/30 rounded font-mono text-[10px]">C</kbd> 
               Confirmar ({selectedPhotos.length})
             </button>
           ) : (
-            <div className="px-4 py-1.5 opacity-50 flex items-center gap-2 cursor-not-allowed">
-              <kbd className="px-2 py-0.5 bg-white/20 rounded-md font-mono text-xs">C</kbd> 
+            <div className="px-3 py-1 opacity-40 flex items-center gap-1.5 cursor-not-allowed text-xs">
+              <kbd className="px-1.5 py-0.2 bg-white/20 rounded font-mono text-[10px]">C</kbd> 
               Confirmar
             </div>
           )}
+
+          <div className="flex items-center gap-1">
+            <kbd className="px-1.5 py-0.5 bg-white/20 rounded font-mono text-[10px]">Esc</kbd> Sair
+          </div>
         </div>
       </div>
-
     </div>
   );
 }
