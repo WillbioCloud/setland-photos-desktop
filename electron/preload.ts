@@ -36,6 +36,11 @@ const api = {
     ipcRenderer.on('updater:available', listener);
     return () => ipcRenderer.removeListener('updater:available', listener);
   },
+  onUpdateNotAvailable: (callback: (info: any) => void) => {
+    const listener = (_: any, info: any) => callback(info);
+    ipcRenderer.on('updater:not-available', listener);
+    return () => ipcRenderer.removeListener('updater:not-available', listener);
+  },
   onUpdateProgress: (callback: (progress: any) => void) => {
     const listener = (_: any, progress: any) => callback(progress);
     ipcRenderer.on('updater:progress', listener);
@@ -45,6 +50,11 @@ const api = {
     const listener = (_: any, info: any) => callback(info);
     ipcRenderer.on('updater:downloaded', listener);
     return () => ipcRenderer.removeListener('updater:downloaded', listener);
+  },
+  onUpdateError: (callback: (err: any) => void) => {
+    const listener = (_: any, err: any) => callback(err);
+    ipcRenderer.on('updater:error', listener);
+    return () => ipcRenderer.removeListener('updater:error', listener);
   },
   startUpdateDownload: () => ipcRenderer.invoke('updater:startDownload'),
   quitAndInstall: () => ipcRenderer.invoke('updater:quitAndInstall'),

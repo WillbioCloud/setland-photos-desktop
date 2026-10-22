@@ -12,13 +12,20 @@ import { autoUpdater } from 'electron-updater';
 dotenv.config();
 
 // Configuração do Auto-Updater (GitHub Releases)
-autoUpdater.autoDownload = false;
+autoUpdater.autoDownload = true;
 autoUpdater.autoInstallOnAppQuit = true;
 
 autoUpdater.on('update-available', (info) => {
   console.log('[AutoUpdater] Nova atualização detectada:', info.version);
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send('updater:available', info);
+  }
+});
+
+autoUpdater.on('update-not-available', (info) => {
+  console.log('[AutoUpdater] Aplicativo já está na versão mais recente:', info?.version);
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('updater:not-available', info);
   }
 });
 
@@ -37,6 +44,9 @@ autoUpdater.on('update-downloaded', (info) => {
 
 autoUpdater.on('error', (err) => {
   console.error('[AutoUpdater] Erro no auto-updater:', err);
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('updater:error', err?.message || String(err));
+  }
 });
 
 // 1. Recria as variáveis globais de diretório para ES Modules
@@ -793,17 +803,17 @@ app.whenReady().then(() => {
   });
 
   ipcMain.handle('updater:quitAndInstall', () => {
-    console.log('[AutoUpdater] Reiniciando aplicativo para aplicar atualização...');
-    autoUpdater.quitAndInstall();
+    console.log('[AutoUpdater] Reiniciando aplicativo para aplicar atualização silenciosa...');
+    // Argumentos (isSilent = true, isForceRunAfter = true)
+    // Fecha imediatamente, aplica a atualização sem abrir wizard do Windows e reabre o app atualizado
+    autoUpdater.quitAndInstall(true, true);
   });
 
   ipcMain.handle('updater:checkForUpdates', async () => {
-    try {
+    if (app.isPackaged) {
       return await autoUpdater.checkForUpdates();
-    } catch (err: any) {
-      console.warn('[AutoUpdater] Erro ao checar atualizações:', err);
-      throw err;
     }
+    return null;
   });
 
   // Checagem automática apenas quando o app estiver empacotado em produção

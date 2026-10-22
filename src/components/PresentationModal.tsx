@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { CheckCircle2, Move, Sparkles } from 'lucide-react';
+import { CheckCircle2, Move, Sparkles, Copy } from 'lucide-react';
 import { toast } from "sonner";
 import watermarkLogo from '../assets/watermark_setland.png';
 
@@ -14,6 +14,12 @@ interface PresentationModalProps {
 
 type WatermarkPreset = 'br' | 'bl' | 'tr' | 'tl' | 'center' | 'custom';
 
+export interface PhotoWatermarkConfig {
+  enabled: boolean;
+  preset: WatermarkPreset;
+  customPos: { xPercent: number; yPercent: number };
+}
+
 export default function PresentationModal({
   isOpen,
   onClose,
@@ -23,15 +29,22 @@ export default function PresentationModal({
   onConfirmSelection
 }: PresentationModalProps) {
   const [currentIndex, setCurrentIndex] = useState(0);
-  const [showWatermark, setShowWatermark] = useState(true);
-  const [watermarkPreset, setWatermarkPreset] = useState<WatermarkPreset>('br');
   const [showUI, setShowUI] = useState(true);
+
+  // Mapa de configurações individuais de marca d'água indexado pelo ID da foto
+  const [watermarksByPhoto, setWatermarksByPhoto] = useState<Record<string | number, PhotoWatermarkConfig>>({});
+
+  // Helper para recuperar ou inicializar a configuração da foto atual
+  const getActiveWatermark = useCallback((photoId: string | number): PhotoWatermarkConfig => {
+    return watermarksByPhoto[photoId] || {
+      enabled: true, // Padrão inicial: ativa com proteção
+      preset: 'br',
+      customPos: { xPercent: 78, yPercent: 82 }
+    };
+  }, [watermarksByPhoto]);
 
   // Orientação e dimensões da foto atual
   const [isPortrait, setIsPortrait] = useState(false);
-  
-  // Posição livre via Drag & Drop (em porcentagem 0-100% do container da foto)
-  const [customPos, setCustomPos] = useState<{ xPercent: number; yPercent: number }>({ xPercent: 78, yPercent: 82 });
   const [isDragging, setIsDragging] = useState(false);
 
   const containerRef = useRef<HTMLDivElement>(null);
@@ -64,6 +77,68 @@ export default function PresentationModal({
     setIsPortrait(naturalHeight > naturalWidth);
   };
 
+  const currentPhoto = photos[currentIndex];
+
+  // Alterna marca d'água APENAS na foto atual
+  const toggleCurrentWatermark = useCallback(() => {
+    if (!currentPhoto) return;
+    const current = getActiveWatermark(currentPhoto.id);
+    const nextState = !current.enabled;
+    setWatermarksByPhoto(prev => ({
+      ...prev,
+      [currentPhoto.id]: {
+        ...current,
+        enabled: nextState
+      }
+    }));
+    toast.info(nextState ? "Marca d'água ativada nesta foto" : "Marca d'água removida desta foto");
+  }, [currentPhoto, getActiveWatermark]);
+
+  // Rotaciona os presets de canto APENAS na foto atual
+  const rotateCurrentPreset = useCallback(() => {
+    if (!currentPhoto) return;
+    const current = getActiveWatermark(currentPhoto.id);
+    const nextMap: Record<WatermarkPreset, WatermarkPreset> = {
+      br: 'bl',
+      bl: 'tl',
+      tl: 'tr',
+      tr: 'center',
+      center: 'br',
+      custom: 'br'
+    };
+    const nextPreset = nextMap[current.preset];
+    setWatermarksByPhoto(prev => ({
+      ...prev,
+      [currentPhoto.id]: {
+        ...current,
+        preset: nextPreset
+      }
+    }));
+  }, [currentPhoto, getActiveWatermark]);
+
+  // Aplica a posição/preset atual a todas as fotos da sessão em lote
+  const applyCurrentPositionToAll = useCallback(() => {
+    if (!currentPhoto) return;
+    const current = getActiveWatermark(currentPhoto.id);
+    setWatermarksByPhoto(prev => {
+      const nextMap = { ...prev };
+      for (const p of photos) {
+        const existing = nextMap[p.id] || {
+          enabled: true,
+          preset: 'br',
+          customPos: { xPercent: 78, yPercent: 82 }
+        };
+        nextMap[p.id] = {
+          ...existing,
+          preset: current.preset,
+          customPos: { ...current.customPos }
+        };
+      }
+      return nextMap;
+    });
+    toast.success("Posição da marca d'água aplicada a todas as fotos!");
+  }, [currentPhoto, getActiveWatermark, photos]);
+
   // Ciclo de navegação e atalhos de teclado
   useEffect(() => {
     if (!isOpen) return;
@@ -79,7 +154,9 @@ export default function PresentationModal({
           setCurrentIndex(prev => Math.max(prev - 1, 0));
           break;
         case 'Enter':
-          togglePhoto(photos[currentIndex].id);
+          if (photos[currentIndex]) {
+            togglePhoto(photos[currentIndex].id);
+          }
           break;
         case 'c':
         case 'C':
@@ -91,21 +168,11 @@ export default function PresentationModal({
           break;
         case 'm':
         case 'M':
-          setShowWatermark(prev => !prev);
+          toggleCurrentWatermark();
           break;
         case 'p':
         case 'P':
-          setWatermarkPreset(prev => {
-            const nextMap: Record<WatermarkPreset, WatermarkPreset> = {
-              br: 'bl',
-              bl: 'tl',
-              tl: 'tr',
-              tr: 'center',
-              center: 'br',
-              custom: 'br'
-            };
-            return nextMap[prev];
-          });
+          rotateCurrentPreset();
           break;
         case 'Escape':
           onClose();
@@ -117,7 +184,7 @@ export default function PresentationModal({
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isOpen, currentIndex, photos, togglePhoto, onClose, selectedPhotos, onConfirmSelection]);
+  }, [isOpen, currentIndex, photos, togglePhoto, onClose, selectedPhotos, onConfirmSelection, toggleCurrentWatermark, rotateCurrentPreset]);
 
   useEffect(() => {
     if (isOpen) {
@@ -125,15 +192,16 @@ export default function PresentationModal({
     }
   }, [isOpen]);
 
-  // Lógica de Drag & Drop da Marca d'Água estritamente dentro da foto
+  // Lógica de Drag & Drop da Marca d'Água estritamente dentro da foto atual
   const handleMouseDown = (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
 
-    if (!containerRef.current || !watermarkRef.current) return;
+    if (!containerRef.current || !watermarkRef.current || !currentPhoto) return;
 
     const containerRect = containerRef.current.getBoundingClientRect();
     const watermarkRect = watermarkRef.current.getBoundingClientRect();
+    const photoId = currentPhoto.id;
 
     dragStartRef.current = {
       mouseX: e.clientX,
@@ -163,11 +231,26 @@ export default function PresentationModal({
       const clampedX = Math.max(0, Math.min(rawX, maxX));
       const clampedY = Math.max(0, Math.min(rawY, maxY));
 
-      setCustomPos({
+      const newPos = {
         xPercent: (clampedX / cRect.width) * 100,
         yPercent: (clampedY / cRect.height) * 100
+      };
+
+      setWatermarksByPhoto(prev => {
+        const existing = prev[photoId] || {
+          enabled: true,
+          preset: 'br',
+          customPos: { xPercent: 78, yPercent: 82 }
+        };
+        return {
+          ...prev,
+          [photoId]: {
+            ...existing,
+            preset: 'custom',
+            customPos: newPos
+          }
+        };
       });
-      setWatermarkPreset('custom');
     };
 
     const handleWindowMouseUp = () => {
@@ -181,19 +264,19 @@ export default function PresentationModal({
     window.addEventListener('mouseup', handleWindowMouseUp);
   };
 
-  if (!isOpen || photos.length === 0) return null;
+  if (!isOpen || photos.length === 0 || !currentPhoto) return null;
 
-  const currentPhoto = photos[currentIndex];
   const isSelected = selectedPhotos.includes(currentPhoto.id);
+  const activeWatermark = getActiveWatermark(currentPhoto.id);
 
   // Calcula classe de posicionamento caso seja preset ou estilo inline caso seja custom
   const getWatermarkPositionStyle = (): { className: string; style?: React.CSSProperties } => {
-    if (watermarkPreset === 'custom') {
+    if (activeWatermark.preset === 'custom') {
       return {
         className: 'absolute',
         style: {
-          left: `${customPos.xPercent}%`,
-          top: `${customPos.yPercent}%`
+          left: `${activeWatermark.customPos.xPercent}%`,
+          top: `${activeWatermark.customPos.yPercent}%`
         }
       };
     }
@@ -206,7 +289,7 @@ export default function PresentationModal({
       center: 'top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2'
     };
 
-    return { className: `absolute ${presetClasses[watermarkPreset]}` };
+    return { className: `absolute ${presetClasses[activeWatermark.preset]}` };
   };
 
   const { className: watermarkPosClass, style: watermarkPosStyle } = getWatermarkPositionStyle();
@@ -240,8 +323,8 @@ export default function PresentationModal({
           </div>
         )}
 
-        {/* Marca d'Água Interativa Presa Dentro da Foto */}
-        {showWatermark && (
+        {/* Marca d'Água Interativa Presa Dentro da Foto Atual */}
+        {activeWatermark.enabled && (
           <div
             ref={watermarkRef}
             onMouseDown={handleMouseDown}
@@ -269,7 +352,7 @@ export default function PresentationModal({
 
       {/* Barra de Controles Inferior */}
       <div className={`absolute bottom-6 transition-opacity duration-500 z-30 ${showUI ? 'opacity-100' : 'opacity-0'}`}>
-        <div className="bg-black/85 backdrop-blur-md border border-white/10 rounded-full px-5 py-2.5 flex flex-wrap gap-4 text-white text-xs items-center shadow-2xl">
+        <div className="bg-black/85 backdrop-blur-md border border-white/10 rounded-full px-5 py-2.5 flex flex-wrap gap-3.5 text-white text-xs items-center shadow-2xl">
           
           {/* Badge de Orientação Detectada */}
           <div className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-white/10 font-mono text-[10px] uppercase font-bold tracking-wider text-primary border border-white/10">
@@ -286,15 +369,46 @@ export default function PresentationModal({
             <kbd className="px-1.5 py-0.5 bg-white/20 rounded font-mono text-[10px]">Enter</kbd> {isSelected ? 'Desmarcar' : 'Selecionar'}
           </div>
 
-          <div className="flex items-center gap-1">
-            <kbd className="px-1.5 py-0.5 bg-white/20 rounded font-mono text-[10px]">M</kbd> Marca d&apos;água: <strong>{showWatermark ? 'Ligada' : 'Desligada'}</strong>
-          </div>
+          {/* Status e Botão Interativo para Ligar/Desligar nesta foto */}
+          <button
+            type="button"
+            onClick={toggleCurrentWatermark}
+            className={`px-2.5 py-1 rounded-full font-medium transition-all flex items-center gap-1.5 cursor-pointer text-xs border active:scale-95 ${
+              activeWatermark.enabled
+                ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40 hover:bg-emerald-500/30'
+                : 'bg-rose-500/20 text-rose-300 border-rose-500/40 hover:bg-rose-500/30'
+            }`}
+            title="Ligar ou desligar marca d'água nesta foto (Atalho: M)"
+          >
+            <kbd className="px-1.5 py-0.5 bg-black/40 rounded font-mono text-[10px]">M</kbd>
+            <span>
+              Marca d&apos;água: <strong>{activeWatermark.enabled ? 'Ligada' : 'Desligada'}</strong>
+            </span>
+          </button>
 
-          <div className="flex items-center gap-1">
-            <kbd className="px-1.5 py-0.5 bg-white/20 rounded font-mono text-[10px]">P</kbd> Posição: <span className="uppercase font-mono text-primary font-bold">{watermarkPreset}</span>
-          </div>
+          {/* Posição rápida */}
+          <button
+            type="button"
+            onClick={rotateCurrentPreset}
+            className="px-2.5 py-1 rounded-full bg-white/10 hover:bg-white/20 transition-all flex items-center gap-1.5 cursor-pointer text-xs border border-white/10 active:scale-95"
+            title="Rotacionar posição da marca d'água nesta foto (Atalho: P)"
+          >
+            <kbd className="px-1.5 py-0.5 bg-black/40 rounded font-mono text-[10px]">P</kbd>
+            <span>Posição: <strong className="uppercase font-mono text-primary">{activeWatermark.preset}</strong></span>
+          </button>
 
-          <div className="hidden sm:inline text-white/50 text-[11px]">
+          {/* Botão Rápido: Aplicar esta posição a todas */}
+          <button
+            type="button"
+            onClick={applyCurrentPositionToAll}
+            className="px-2.5 py-1 rounded-full bg-primary/20 hover:bg-primary/30 text-primary border border-primary/30 transition-all flex items-center gap-1.5 cursor-pointer text-xs active:scale-95"
+            title="Replicar esta mesma posição para todas as fotos da sessão"
+          >
+            <Copy className="w-3.5 h-3.5" />
+            <span>Aplicar esta posição a todas</span>
+          </button>
+
+          <div className="hidden lg:inline text-white/50 text-[11px]">
             🖱️ Arraste a logo livremente
           </div>
 
@@ -303,7 +417,7 @@ export default function PresentationModal({
           {selectedPhotos.length > 0 ? (
             <button 
               onClick={onConfirmSelection}
-              className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-full font-bold transition-all flex items-center gap-1.5 shadow-lg active:scale-95 text-xs"
+              className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-full font-bold transition-all flex items-center gap-1.5 shadow-lg active:scale-95 text-xs cursor-pointer"
             >
               <kbd className="px-1.5 py-0.2 bg-black/30 rounded font-mono text-[10px]">C</kbd> 
               Confirmar ({selectedPhotos.length})

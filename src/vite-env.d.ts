@@ -30,8 +30,10 @@ export interface ElectronAPI {
   openExternal: (url: string) => Promise<any>;
   deleteLocalSessionDir: (localCacheDir: string) => Promise<any>;
   onUpdateAvailable: (callback: (info: UpdateInfo) => void) => () => void;
+  onUpdateNotAvailable?: (callback: (info: UpdateInfo) => void) => () => void;
   onUpdateProgress: (callback: (progress: UpdateProgress) => void) => () => void;
   onUpdateDownloaded: (callback: (info: UpdateInfo) => void) => () => void;
+  onUpdateError?: (callback: (err: any) => void) => () => void;
   startUpdateDownload: () => Promise<any>;
   quitAndInstall: () => void;
   checkForUpdates: () => Promise<any>;

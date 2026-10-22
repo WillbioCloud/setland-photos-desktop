@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { 
   UserPlus, 
   LayoutDashboard, 
@@ -18,6 +18,8 @@ import {
 } from 'lucide-react';
 import watermarkLogo from '../assets/watermark_setland.png';
 import { useTheme, type ThemeMode } from '@/hooks/useTheme';
+import VersionPopover from './VersionPopover';
+import { useAutoUpdater } from '@/hooks/useAutoUpdater';
 
 const THEME_META: Record<ThemeMode, { icon: typeof Sun; label: string; hint: string }> = {
   light: { icon: Sun, label: 'Claro', hint: 'Operação diurna' },
@@ -66,6 +68,15 @@ export interface HeaderProps {
  * Ideal para monitores quadrados (4:3 / 5:4) como 1024x768 ou 1280x1024.
  */
 export function Sidebar({ activeTab, setActiveTab, userRole }: SidebarProps) {
+  const [isPopoverOpen, setIsPopoverOpen] = useState(false);
+  const {
+    updateStatus,
+    progress,
+    newVersion,
+    checkForUpdates,
+    installUpdate
+  } = useAutoUpdater();
+
   const menuItems = [
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
     { id: 'clientes', label: 'Clientes', icon: Users },
@@ -86,7 +97,7 @@ export function Sidebar({ activeTab, setActiveTab, userRole }: SidebarProps) {
     <aside className="app-no-drag w-56 xl:w-60 h-full shrink-0 flex flex-col bg-brand-surface dark:bg-[#111318] border-r border-border dark:border-white/10 select-none z-30 transition-colors duration-300">
       
       {/* Topo da Sidebar: Logo + Título + Versão (pt-[38px] para Electron window buttons) */}
-      <div className="app-drag-region pt-[38px] px-5 pb-4 border-b border-border dark:border-white/10 shrink-0">
+      <div className="app-drag-region pt-[38px] px-5 pb-4 border-b border-border dark:border-white/10 shrink-0 relative">
         <div className="app-no-drag flex items-center gap-3">
           <img
             src={watermarkLogo}
@@ -96,12 +107,40 @@ export function Sidebar({ activeTab, setActiveTab, userRole }: SidebarProps) {
           <div className="flex flex-col min-w-0">
             <div className="flex items-center gap-1.5">
               <h1 className="text-lg font-bold text-brand-ink tracking-tight">Setland</h1>
-              <span className="text-[10px] font-mono font-bold px-1.5 py-0.5 rounded-full bg-brand-accent/10 text-brand-accent border border-brand-accent/20 tracking-tight select-none">
-                v{__APP_VERSION__}
-              </span>
+              <button
+                type="button"
+                onClick={() => setIsPopoverOpen(prev => !prev)}
+                className="relative text-[10px] font-mono font-bold px-2 py-0.5 rounded-full bg-brand-accent/10 hover:bg-brand-accent/20 text-brand-accent border border-brand-accent/20 tracking-tight select-none transition-all flex items-center gap-1.5 cursor-pointer active:scale-95"
+                title="Detalhes da versão e atualizações do sistema"
+              >
+                <span>v{__APP_VERSION__}</span>
+                {updateStatus === 'downloading' && (
+                  <span className="relative flex h-2 w-2" title="Baixando atualização em segundo plano...">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-2 w-2 bg-amber-500"></span>
+                  </span>
+                )}
+                {updateStatus === 'downloaded' && (
+                  <span className="relative flex h-2 w-2" title="Nova versão pronta para reiniciar!">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500 shadow-[0_0_8px_#10b981]"></span>
+                  </span>
+                )}
+              </button>
             </div>
           </div>
         </div>
+
+        {/* Popover flutuante com dados da versão */}
+        <VersionPopover
+          isOpen={isPopoverOpen}
+          onClose={() => setIsPopoverOpen(false)}
+          updateStatus={updateStatus}
+          progress={progress}
+          newVersion={newVersion}
+          onCheckUpdates={checkForUpdates}
+          onInstall={installUpdate}
+        />
       </div>
 
       {/* Navegação Vertical com destaque dourado na aba ativa */}

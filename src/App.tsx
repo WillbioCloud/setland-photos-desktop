@@ -12,7 +12,6 @@ import Equipe from './components/Equipe';
 import Settings from './components/Settings';
 import { Toaster } from "@/components/ui/sonner"
 import LoginScreen from './components/LoginScreen';
-import UpdateModal from './components/UpdateModal';
 import { supabase } from '@/lib/supabaseClient';
 
 export type UserRole = 'operador' | 'gerente' | 'dono';
@@ -169,12 +168,7 @@ function App() {
   }
 
   if (!isAuthenticated) {
-    return (
-      <>
-        <LoginScreen onLoginSuccess={handleLoginSuccess} />
-        <UpdateModal />
-      </>
-    );
+    return <LoginScreen onLoginSuccess={handleLoginSuccess} />;
   }
 
   return (
@@ -224,7 +218,6 @@ function App() {
         onClose={() => setIsAdminModalOpen(false)}
         onLoginSuccess={(role) => setUserRole(role)}
       />
-      <UpdateModal />
       <Toaster />
     </div>
   );
