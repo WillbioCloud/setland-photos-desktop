@@ -34,9 +34,9 @@ credentials.json.example
 # Electron Build / Output
 dist-electron
 release
-build
 out
 *.exe
+!build/vc_redist.x64.exe
 *.AppImage
 
 # Env & Google OAuth

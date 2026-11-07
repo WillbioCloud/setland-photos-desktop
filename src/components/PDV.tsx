@@ -241,7 +241,7 @@ export default function PDV() {
         const { data: settings } = await supabase.from('system_settings').select('google_drive_folder_id, whatsapp_api_url, whatsapp_instance').single();
 
         const { data: photosToUpload, error: fetchPhotosErr } = await supabase.from('session_photos')
-          .select('id, original_name, local_original_path')
+          .select('id, original_name, local_original_path, has_watermark, watermark_x, watermark_y, watermark_preset')
           .eq('session_id', currentSessionId)
           .eq('status', 'selected');
 

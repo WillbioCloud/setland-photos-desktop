@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import TitleBar from './components/TitleBar';
 import Header, { Sidebar } from './components/Header';
 import Dashboard from './components/Dashboard';
 import GlobalUploadModal from './components/GlobalUploadModal';
@@ -161,42 +162,58 @@ function App() {
 
   if (isAuthChecking) {
     return (
-      <div className="min-h-screen bg-brand-bg flex items-center justify-center">
-        <div className="text-brand-accent animate-pulse font-mono text-sm">Carregando Terminal...</div>
+      <div className="h-screen w-screen bg-brand-bg text-brand-ink flex flex-col overflow-hidden">
+        <TitleBar />
+        <div className="flex-1 flex items-center justify-center">
+          <div className="text-brand-accent animate-pulse font-mono text-sm">Carregando Terminal...</div>
+        </div>
       </div>
     );
   }
 
   if (!isAuthenticated) {
-    return <LoginScreen onLoginSuccess={handleLoginSuccess} />;
+    return (
+      <div className="h-screen w-screen bg-brand-bg text-brand-ink flex flex-col overflow-hidden">
+        <TitleBar />
+        <div className="flex-1 overflow-hidden flex flex-col">
+          <LoginScreen onLoginSuccess={handleLoginSuccess} />
+        </div>
+      </div>
+    );
   }
 
   return (
-    <div className="h-screen w-screen bg-brand-bg text-brand-ink font-sans selection:bg-brand-accent/30 flex overflow-hidden transition-colors duration-300 ease-out">
-      {/* Sidebar Lateral Esquerda Fixa (Ideal para monitores quadrados de quiosque) */}
-      <Sidebar
-        activeTab={activeTab}
-        setActiveTab={setActiveTab}
-        userRole={userRole}
-      />
+    <div className="h-screen w-screen bg-brand-bg text-brand-ink font-sans selection:bg-brand-accent/30 flex flex-col overflow-hidden transition-colors duration-300 ease-out">
+      {/* 1. Borda Superior do App com a Logo e Nome Setland Fotos */}
+      <TitleBar />
 
-      {/* Área Principal Direita: Topbar Compacta + Conteúdo */}
-      <div className="flex-1 flex flex-col h-full overflow-hidden min-w-0">
-        <Header 
-          activeTab={activeTab} 
-          setActiveTab={setActiveTab} 
+      {/* 2. Área Principal de Trabalho (Sidebar + Conteúdo) */}
+      <div className="flex-1 flex overflow-hidden min-h-0">
+        {/* Sidebar Lateral Esquerda Fixa (Ideal para monitores quadrados de quiosque) */}
+        <Sidebar
+          activeTab={activeTab}
+          setActiveTab={setActiveTab}
           userRole={userRole}
-          onAdminClick={() => setIsAdminModalOpen(true)}
-          onNewClientClick={() => setIsModalOpen(true)}
-          onProfileClick={() => setIsProfileModalOpen(true)}
-          onLogout={handleLogout}
         />
+
+        {/* Área Principal Direita: Topbar Compacta + Conteúdo */}
+        <div className="flex-1 flex flex-col h-full overflow-hidden min-w-0">
+          <Header 
+            activeTab={activeTab} 
+            setActiveTab={setActiveTab} 
+            userRole={userRole}
+            onAdminClick={() => setIsAdminModalOpen(true)}
+            onNewClientClick={() => setIsModalOpen(true)}
+            onProfileClick={() => setIsProfileModalOpen(true)}
+            onLogout={handleLogout}
+          />
         
-        <main className="flex-1 overflow-hidden p-3 md:p-5 xl:p-6 flex flex-col min-w-0">
-          <div className="flex-1 w-full mx-auto overflow-y-auto pr-1 no-scrollbar min-w-0">
-            {renderContent()}
-          </div>
-        </main>
+          <main className="flex-1 overflow-hidden p-3 md:p-5 xl:p-6 flex flex-col min-w-0">
+            <div className="flex-1 w-full mx-auto overflow-y-auto pr-1 no-scrollbar min-w-0">
+              {renderContent()}
+            </div>
+          </main>
+        </div>
       </div>
 
       {/* Modal de Perfil da Operação (Fotógrafos / Gerente / Dono) */}

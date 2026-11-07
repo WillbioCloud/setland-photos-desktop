@@ -37,6 +37,11 @@ export interface ElectronAPI {
   startUpdateDownload: () => Promise<any>;
   quitAndInstall: () => void;
   checkForUpdates: () => Promise<any>;
+  minimizeWindow?: () => Promise<void>;
+  maximizeWindow?: () => Promise<void>;
+  closeWindow?: () => Promise<void>;
+  isMaximized?: () => Promise<boolean>;
+  setTitleBarOverlay?: (options: { color: string; symbolColor: string; height?: number }) => Promise<void>;
 }
 
 declare global {

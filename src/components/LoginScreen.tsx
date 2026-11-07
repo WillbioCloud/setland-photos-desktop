@@ -105,9 +105,7 @@ export default function LoginScreen({ onLoginSuccess }: LoginScreenProps) {
   };
 
   return (
-    <div className="min-h-screen bg-brand-bg text-brand-ink flex items-center justify-center p-4 relative overflow-hidden">
-      {/* Faixa arrastável sob o titleBarOverlay do Windows (mesma altura de 38px do electron/main.ts) */}
-      <div className="app-drag-region absolute inset-x-0 top-0 h-[38px] z-10" />
+    <div className="flex-1 w-full bg-brand-bg text-brand-ink flex items-center justify-center p-4 relative overflow-hidden">
       {/* Glow Superior */}
       <div className="absolute top-[-100px] left-1/2 -translate-x-1/2 w-[600px] h-[300px] bg-brand-accent/20 blur-[100px] rounded-full pointer-events-none" />
 

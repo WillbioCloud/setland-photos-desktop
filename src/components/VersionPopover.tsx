@@ -9,6 +9,7 @@ export interface VersionPopoverProps {
   newVersion: string;
   onCheckUpdates: () => void;
   onInstall: () => void;
+  className?: string;
 }
 
 export default function VersionPopover({
@@ -18,7 +19,8 @@ export default function VersionPopover({
   progress,
   newVersion,
   onCheckUpdates,
-  onInstall
+  onInstall,
+  className
 }: VersionPopoverProps) {
   if (!isOpen) return null;
 
@@ -35,7 +37,7 @@ export default function VersionPopover({
   return (
     <>
       <div className="fixed inset-0 z-40" onClick={onClose} />
-      <div className="absolute left-4 top-16 z-50 w-80 bg-brand-surface dark:bg-[#140b17] border border-border dark:border-white/10 rounded-2xl shadow-2xl p-4 animate-in fade-in zoom-in-95 duration-150 select-none">
+      <div className={`absolute z-50 w-80 bg-brand-surface dark:bg-[#140b17] border border-border dark:border-white/10 rounded-2xl shadow-2xl p-4 animate-in fade-in zoom-in-95 duration-150 select-none ${className || 'left-4 top-16'}`}>
         
         {/* Cabeçalho do Balão */}
         <div className="flex items-start justify-between border-b border-border dark:border-white/10 pb-3 mb-3">

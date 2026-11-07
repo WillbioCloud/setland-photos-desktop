@@ -59,6 +59,14 @@ const api = {
   startUpdateDownload: () => ipcRenderer.invoke('updater:startDownload'),
   quitAndInstall: () => ipcRenderer.invoke('updater:quitAndInstall'),
   checkForUpdates: () => ipcRenderer.invoke('updater:checkForUpdates'),
+
+  // Window Controls
+  minimizeWindow: () => ipcRenderer.invoke('window:minimize'),
+  maximizeWindow: () => ipcRenderer.invoke('window:maximize'),
+  closeWindow: () => ipcRenderer.invoke('window:close'),
+  isMaximized: () => ipcRenderer.invoke('window:isMaximized'),
+  setTitleBarOverlay: (options: { color: string; symbolColor: string; height?: number }) =>
+    ipcRenderer.invoke('window:setTitleBarOverlay', options),
 };
 
 contextBridge.exposeInMainWorld('electronAPI', api);

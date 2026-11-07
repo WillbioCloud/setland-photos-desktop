@@ -492,10 +492,95 @@ app.whenReady().then(() => {
         if (process.platform !== 'win32' && !filePath.startsWith('/')) {
           filePath = '/' + filePath;
         }
+        filePath = path.normalize(filePath);
 
-        // Upload físico da imagem 100% original sem nenhuma compressão
-        await uploadPhoto(filePath, folderId, photo.original_name);
+        let fileToUploadPath = filePath;
+        let tempWatermarkedPath: string | null = null;
+
+        // Se o cliente escolheu a foto COM o selo/marca d'água, faz a composição em alta fidelidade
+        if (photo.has_watermark) {
+          try {
+            const watermarkPath = app.isPackaged
+              ? path.join(process.resourcesPath, 'watermark_setland.png')
+              : path.join(__dirname, '../src/assets/watermark_setland.png');
+
+            if (fs.existsSync(watermarkPath) && fs.existsSync(filePath)) {
+              const image = sharp(filePath);
+              const metadata = await image.metadata();
+
+              if (metadata.width && metadata.height) {
+                // Ajusta dimensões visuais considerando eventual rotação EXIF de câmeras DSLR
+                const isRotated = Boolean(metadata.orientation && metadata.orientation >= 5 && metadata.orientation <= 8);
+                const imgWidth = isRotated ? metadata.height : metadata.width;
+                const imgHeight = isRotated ? metadata.width : metadata.height;
+
+                // Calcula o tamanho do selo proporcional à foto (18% da largura visual)
+                const watermarkWidth = Math.round(imgWidth * 0.18);
+                const resizedWatermarkBuffer = await sharp(watermarkPath)
+                  .resize({ width: watermarkWidth })
+                  .toBuffer();
+
+                const wmMeta = await sharp(resizedWatermarkBuffer).metadata();
+                const wmHeight = wmMeta.height || watermarkWidth;
+
+                // Converte as porcentagens ou presets em pixels exatos
+                let left: number;
+                let top: number;
+
+                if (photo.watermark_preset === 'tl') {
+                  left = Math.round(imgWidth * 0.04);
+                  top = Math.round(imgHeight * 0.04);
+                } else if (photo.watermark_preset === 'tr') {
+                  left = Math.round(imgWidth - watermarkWidth - (imgWidth * 0.04));
+                  top = Math.round(imgHeight * 0.04);
+                } else if (photo.watermark_preset === 'bl') {
+                  left = Math.round(imgWidth * 0.04);
+                  top = Math.round(imgHeight - wmHeight - (imgHeight * 0.04));
+                } else if (photo.watermark_preset === 'center') {
+                  left = Math.round((imgWidth - watermarkWidth) / 2);
+                  top = Math.round((imgHeight - wmHeight) / 2);
+                } else if (photo.watermark_preset === 'br') {
+                  left = Math.round(imgWidth - watermarkWidth - (imgWidth * 0.04));
+                  top = Math.round(imgHeight - wmHeight - (imgHeight * 0.04));
+                } else {
+                  // Custom (arraste manual do mouse)
+                  const xPercent = Number(photo.watermark_x ?? 78) / 100;
+                  const yPercent = Number(photo.watermark_y ?? 82) / 100;
+                  left = Math.round(xPercent * imgWidth);
+                  top = Math.round(yPercent * imgHeight);
+                }
+
+                left = Math.max(0, Math.min(left, imgWidth - watermarkWidth));
+                top = Math.max(0, Math.min(top, imgHeight - wmHeight));
+
+                tempWatermarkedPath = path.join(app.getPath('temp'), `wm_${Date.now()}_${photo.original_name.replace(/[^a-zA-Z0-9._-]/g, '_')}`);
+
+                // Composição e exportação JPEG em qualidade máxima (95% e sem perda de cor 4:4:4)
+                await sharp(filePath)
+                  .rotate() // Auto-orienta com base no EXIF para garantir fidelidade
+                  .composite([{ input: resizedWatermarkBuffer, left, top }])
+                  .jpeg({ quality: 95, chromaSubsampling: '4:4:4' })
+                  .toFile(tempWatermarkedPath);
+
+                fileToUploadPath = tempWatermarkedPath;
+              }
+            } else {
+              console.warn('[Sharp Watermark] Arquivo da logo ou da foto não encontrado no disco:', { watermarkPath, filePath });
+            }
+          } catch (wmErr) {
+            console.warn('[Sharp Watermark] Erro ao estampar selo na foto, enviando original:', wmErr);
+            fileToUploadPath = filePath;
+          }
+        }
+
+        // Upload físico (original ou com marca d'água)
+        await uploadPhoto(fileToUploadPath, folderId, photo.original_name);
         uploadedCount++;
+
+        // Logo após concluir o upload da foto atual, remove o arquivo temporário se foi criado:
+        if (tempWatermarkedPath && fs.existsSync(tempWatermarkedPath)) {
+          try { fs.unlinkSync(tempWatermarkedPath); } catch {}
+        }
 
         // Notifica o frontend com o ID e nome exato da foto finalizada
         event.sender.send('drive:photo-progress', {
@@ -814,6 +899,38 @@ app.whenReady().then(() => {
       return await autoUpdater.checkForUpdates();
     }
     return null;
+  });
+
+  // Handlers de controle de janela (Minimizar, Maximizar, Fechar, Overlay)
+  ipcMain.handle('window:minimize', () => {
+    mainWindow?.minimize();
+  });
+
+  ipcMain.handle('window:maximize', () => {
+    if (!mainWindow) return;
+    if (mainWindow.isMaximized()) {
+      mainWindow.unmaximize();
+    } else {
+      mainWindow.maximize();
+    }
+  });
+
+  ipcMain.handle('window:close', () => {
+    mainWindow?.close();
+  });
+
+  ipcMain.handle('window:isMaximized', () => {
+    return mainWindow?.isMaximized() ?? false;
+  });
+
+  ipcMain.handle('window:setTitleBarOverlay', (_event, options: { color: string; symbolColor: string; height?: number }) => {
+    if (mainWindow && !mainWindow.isDestroyed() && process.platform === 'win32') {
+      try {
+        mainWindow.setTitleBarOverlay(options);
+      } catch (e) {
+        console.warn('[Window] Falha ao atualizar titleBarOverlay:', e);
+      }
+    }
   });
 
   // Checagem automática apenas quando o app estiver empacotado em produção

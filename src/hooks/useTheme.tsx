@@ -71,6 +71,26 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     }
   }, [theme]);
 
+  // Sincroniza o overlay nativo do Windows (minimizar/fechar) com o tema atual
+  useEffect(() => {
+    const electron = window.electron || window.electronAPI;
+    if (electron?.setTitleBarOverlay) {
+      if (resolvedTheme === 'dark') {
+        electron.setTitleBarOverlay({
+          color: '#0D020C',
+          symbolColor: '#D9A45C',
+          height: 38
+        }).catch(() => {});
+      } else {
+        electron.setTitleBarOverlay({
+          color: '#F3F4F6',
+          symbolColor: '#1C1B17',
+          height: 38
+        }).catch(() => {});
+      }
+    }
+  }, [resolvedTheme]);
+
   // Sincroniza em tempo real com o OS quando `theme === 'system'`.
   useEffect(() => {
     if (theme !== 'system' || !window.matchMedia) return;

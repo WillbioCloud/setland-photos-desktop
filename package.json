@@ -1,7 +1,7 @@
 {
   "name": "setland-photos-desktop",
   "private": true,
-  "version": "1.0.2",
+  "version": "1.0.3",
   "type": "module",
   "main": "dist-electron/main.js",
   "scripts": {
@@ -107,7 +107,8 @@
       "shortcutName": "Setland Fotos",
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "uninstallDisplayName": "Setland Fotos"
+      "uninstallDisplayName": "Setland Fotos",
+      "include": "build/installer.nsh"
     }
   }
 }

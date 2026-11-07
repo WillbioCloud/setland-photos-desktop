@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { CheckCircle2, Move, Sparkles, Copy } from 'lucide-react';
 import { toast } from "sonner";
 import watermarkLogo from '../assets/watermark_setland.png';
+import { supabase } from '@/lib/supabaseClient';
 
 interface PresentationModalProps {
   isOpen: boolean;
@@ -51,6 +52,7 @@ export default function PresentationModal({
   const watermarkRef = useRef<HTMLDivElement>(null);
   const dragStartRef = useRef<{ mouseX: number; mouseY: number; startX: number; startY: number } | null>(null);
   const timeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const isSavingRef = useRef(false);
 
   const handleMouseMove = useCallback(() => {
     setShowUI(true);
@@ -139,6 +141,37 @@ export default function PresentationModal({
     toast.success("Posição da marca d'água aplicada a todas as fotos!");
   }, [currentPhoto, getActiveWatermark, photos]);
 
+  const handleConfirmAndSaveWatermarks = async () => {
+    if (selectedPhotos.length === 0 || isSavingRef.current) return;
+    isSavingRef.current = true;
+
+    // Grava as preferências de marca d'água de cada foto selecionada no banco
+    try {
+      const updates = selectedPhotos.map(async (photoId) => {
+        const config = getActiveWatermark(photoId);
+        return supabase
+          .from('session_photos')
+          .update({
+            has_watermark: config.enabled,
+            watermark_x: config.customPos.xPercent,
+            watermark_y: config.customPos.yPercent,
+            watermark_preset: config.preset,
+          })
+          .eq('id', photoId);
+      });
+
+      await Promise.all(updates);
+    } catch (err) {
+      console.warn('[PresentationModal] Aviso ao gravar configurações da marca d água:', err);
+    } finally {
+      isSavingRef.current = false;
+    }
+
+    if (onConfirmSelection) {
+      onConfirmSelection();
+    }
+  };
+
   // Ciclo de navegação e atalhos de teclado
   useEffect(() => {
     if (!isOpen) return;
@@ -160,9 +193,9 @@ export default function PresentationModal({
           break;
         case 'c':
         case 'C':
-          if (selectedPhotos.length > 0 && onConfirmSelection) {
-            onConfirmSelection();
-          } else if (selectedPhotos.length === 0) {
+          if (selectedPhotos.length > 0) {
+            void handleConfirmAndSaveWatermarks();
+          } else {
             toast.error("Selecione pelo menos uma foto para confirmar.");
           }
           break;
@@ -184,7 +217,7 @@ export default function PresentationModal({
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isOpen, currentIndex, photos, togglePhoto, onClose, selectedPhotos, onConfirmSelection, toggleCurrentWatermark, rotateCurrentPreset]);
+  }, [isOpen, currentIndex, photos, togglePhoto, onClose, selectedPhotos, onConfirmSelection, toggleCurrentWatermark, rotateCurrentPreset, handleConfirmAndSaveWatermarks]);
 
   useEffect(() => {
     if (isOpen) {
@@ -416,7 +449,7 @@ export default function PresentationModal({
 
           {selectedPhotos.length > 0 ? (
             <button 
-              onClick={onConfirmSelection}
+              onClick={() => void handleConfirmAndSaveWatermarks()}
               className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-full font-bold transition-all flex items-center gap-1.5 shadow-lg active:scale-95 text-xs cursor-pointer"
             >
               <kbd className="px-1.5 py-0.2 bg-black/30 rounded font-mono text-[10px]">C</kbd> 
