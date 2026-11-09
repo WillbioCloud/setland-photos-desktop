@@ -5,7 +5,7 @@ import { Input } from '@/components/ui/input';
 import { toast } from "sonner";
 import { supabase } from '@/lib/supabaseClient';
 
-export type UserRole = 'operador' | 'gerente' | 'dono';
+export type UserRole = 'operador' | 'gerente' | 'dono' | 'lojinha';
 
 interface SettingsProps {
   userRole: UserRole;

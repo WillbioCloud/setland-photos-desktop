@@ -10,7 +10,7 @@ import { supabase } from '@/lib/supabaseClient';
 import { deleteEmployeeAvatarFromStorage } from '@/lib/avatarStorage';
 import { toast } from 'sonner';
 
-export type UserRole = 'operador' | 'gerente' | 'dono';
+export type UserRole = 'operador' | 'gerente' | 'dono' | 'lojinha';
 
 interface EquipeProps {
   userRole: UserRole;

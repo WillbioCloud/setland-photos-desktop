@@ -11,11 +11,12 @@ import AdminLoginModal from './components/AdminLoginModal';
 import OperatorProfileModal from './components/OperatorProfileModal';
 import Equipe from './components/Equipe';
 import Settings from './components/Settings';
+import LojinhaView from './components/LojinhaView';
 import { Toaster } from "@/components/ui/sonner"
 import LoginScreen from './components/LoginScreen';
 import { supabase } from '@/lib/supabaseClient';
 
-export type UserRole = 'operador' | 'gerente' | 'dono';
+export type UserRole = 'operador' | 'gerente' | 'dono' | 'lojinha';
 
 function App() {
   const [activeTab, setActiveTab] = useState('dashboard');
@@ -122,6 +123,8 @@ function App() {
         return;
       }
 
+      if (userRole === 'lojinha') return;
+
       if (e.code === 'Numpad7' || e.key === 'Enter' || e.key === 'F7') {
         if (document.getElementById('presentation-modal')) {
           return; // Bloqueia o atalho se a tela cheia de apresentação estiver aberta
@@ -140,6 +143,10 @@ function App() {
   }, []);
 
   const renderContent = () => {
+    if (userRole === 'lojinha') {
+      return <LojinhaView />;
+    }
+
     switch (activeTab) {
       case 'dashboard':
         return <Dashboard userRole={userRole} />;
@@ -189,12 +196,14 @@ function App() {
 
       {/* 2. Área Principal de Trabalho (Sidebar + Conteúdo) */}
       <div className="flex-1 flex overflow-hidden min-h-0">
-        {/* Sidebar Lateral Esquerda Fixa (Ideal para monitores quadrados de quiosque) */}
-        <Sidebar
-          activeTab={activeTab}
-          setActiveTab={setActiveTab}
-          userRole={userRole}
-        />
+        {/* Sidebar Lateral Esquerda Fixa (Ocultada para perfil lojinha) */}
+        {userRole !== 'lojinha' && (
+          <Sidebar
+            activeTab={activeTab}
+            setActiveTab={setActiveTab}
+            userRole={userRole}
+          />
+        )}
 
         {/* Área Principal Direita: Topbar Compacta + Conteúdo */}
         <div className="flex-1 flex flex-col h-full overflow-hidden min-w-0">

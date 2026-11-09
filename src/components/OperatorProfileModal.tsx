@@ -22,7 +22,7 @@ import { Input } from '@/components/ui/input';
 import { supabase } from '@/lib/supabaseClient';
 import { toast } from 'sonner';
 
-export type UserRole = 'operador' | 'gerente' | 'dono';
+export type UserRole = 'operador' | 'gerente' | 'dono' | 'lojinha';
 
 interface OperatorProfileModalProps {
   isOpen: boolean;

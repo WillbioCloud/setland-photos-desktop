@@ -45,7 +45,7 @@ import {
   type SessionRow,
 } from '@/lib/reporting';
 
-export type UserRole = 'operador' | 'gerente' | 'dono';
+export type UserRole = 'operador' | 'gerente' | 'dono' | 'lojinha';
 
 interface DashboardProps {
   userRole?: UserRole;

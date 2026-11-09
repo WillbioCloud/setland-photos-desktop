@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Camera, QrCode, CreditCard, Banknote, ShoppingCart, Trash2, ArrowRight, Check, Store } from 'lucide-react';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import PrintOrderModal from './PrintOrderModal';
@@ -15,6 +15,9 @@ export default function PDV() {
   const [selectedTerminal, setSelectedTerminal] = useState("Via Lojinha (Balcão)");
   const [isPrintModalOpen, setIsPrintModalOpen] = useState(false);
   const [printModalData, setPrintModalData] = useState<{ clientName: string; photos: any[] }>({ clientName: '', photos: [] });
+
+  // Trava para evitar disparar upload/impressão mais de uma vez para o mesmo pedido
+  const processedOrderIdsRef = useRef<Set<string>>(new Set());
 
   const loadData = useCallback(async () => {
     // 1. Busca os pedidos pendentes e os que aguardam pagamento na lojinha
@@ -174,12 +177,282 @@ export default function PDV() {
     await loadData();
   };
 
-  // 2. Fluxo completo de conclusão de pagamento e entrega digital / impressão
+  // Rotina de Upload para o Google Drive em background no SSD da Fotografia com Realtime Feedback
+  const runOrderBackgroundUpload = useCallback(async (orderToUpload: any) => {
+    const currentSessionId = orderToUpload.session_id;
+    const currentClientName = orderToUpload.photo_sessions?.clients?.name || orderToUpload.photo_sessions?.client_name || 'Cliente';
+    const currentClientCpf = orderToUpload.photo_sessions?.clients?.cpf || orderToUpload.photo_sessions?.client_cpf || '';
+    const currentClientPhone = orderToUpload.photo_sessions?.clients?.phone || orderToUpload.photo_sessions?.client_phone || '';
+    const currentOrderId = orderToUpload.id;
+    const currentTotal = orderToUpload.total_amount;
+    const orderPricing = calculatePricing(orderToUpload.printed_count || 0, orderToUpload.digital_count || 0, packages);
+    const currentPricingItems = orderPricing?.items || [];
+
+    // Toast persistente do Sonner com spinner ativo no canto esquerdo
+    const toastUploadId = toast.loading(`Iniciando entrega digital para ${currentClientName}...`, {
+      description: "Criando pasta no Google Drive...",
+    });
+
+    try {
+      const { data: settings } = await supabase.from('system_settings').select('google_drive_folder_id, whatsapp_api_url, whatsapp_instance').single();
+
+      const { data: photosToUpload, error: fetchPhotosErr } = await supabase.from('session_photos')
+        .select('id, original_name, local_original_path, has_watermark, watermark_x, watermark_y, watermark_preset')
+        .eq('session_id', currentSessionId)
+        .in('status', ['selected', 'error']);
+
+      if (fetchPhotosErr) throw fetchPhotosErr;
+
+      if (!photosToUpload || photosToUpload.length === 0) {
+        console.log(`[PDV] Nenhuma foto 'selected'/'error' restante para envio no pedido ${orderToUpload.id}.`);
+        toast.dismiss(toastUploadId);
+        return;
+      }
+
+      if (!settings?.google_drive_folder_id) {
+        throw new Error("O ID da pasta do Drive não foi configurado nas Configurações do Sistema.");
+      }
+
+      // @ts-ignore
+      if (!window.electronAPI || !window.electronAPI.uploadToDrive) {
+        throw new Error("A ponte de comunicação com o Electron falhou.");
+      }
+
+      // Ouvinte do progresso de cada imagem individualmente (fire-and-forget para evitar race condition)
+      // @ts-ignore
+      const cleanupListener = window.electronAPI.onDrivePhotoProgress ? window.electronAPI.onDrivePhotoProgress((data: any) => {
+        if (data.sessionId === currentSessionId) {
+          // Atualiza status da foto no banco sem bloquear o callback IPC
+          supabase.from('session_photos').update({ status: 'synced', is_printed: false }).eq('id', data.photoId)
+            .then(() => { })
+            .catch((err: any) => console.warn('Erro ao atualizar status da foto:', err));
+
+          // Dispara evento global de atualização em tempo real para os modais
+          window.dispatchEvent(new CustomEvent('drive-photo-synced', { detail: data }));
+
+          // Atualiza o Sonner Toast com contador e nome da foto
+          toast.loading(`Enviando para o Drive (${data.current}/${data.total})`, {
+            id: toastUploadId,
+            description: `Enviada: ${data.fileName} (${data.percentage}%)`
+          });
+        }
+      }) : null;
+
+      // Dispara o upload das fotos originais em alta fidelidade reaproveitando a pasta do cliente
+      // @ts-ignore
+      const uploadRes = await window.electronAPI.uploadToDrive({
+        sessionId: currentSessionId,
+        clientName: currentClientName,
+        clientPhone: currentClientPhone,
+        clientCpf: currentClientPhone || currentClientCpf,
+        photos: photosToUpload,
+        parentFolderId: settings.google_drive_folder_id,
+        existingFolderId: orderToUpload.photo_sessions?.drive_folder_id || null
+      });
+
+      if (cleanupListener) cleanupListener();
+
+      // Sessão 100% sincronizada
+      await supabase.from('photo_sessions').update({
+        drive_status: 'synced',
+        drive_folder_id: uploadRes.folderId
+      }).eq('id', currentSessionId);
+
+      toast.dismiss(toastUploadId);
+
+      // Feedback de sucesso no Toast com ícone verde
+      toast.success(`Entrega Digital Concluída!`, {
+        description: `${photosToUpload.length} fotos salvas em alta qualidade no Google Drive.`,
+        duration: 3500
+      });
+
+      // Notifica todas as telas que a sessão foi atualizada no banco
+      window.dispatchEvent(new CustomEvent('session-updated', { detail: { sessionId: currentSessionId } }));
+      loadData();
+
+      // Webhook Dinâmico para o n8n (WhatsApp) com Delay Estratégico
+      if (settings?.whatsapp_api_url) {
+        // Aguarda 5s para o Google Drive indexar a pasta antes de acionar o webhook
+        setTimeout(() => {
+          fetch(settings.whatsapp_api_url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              orderId: currentOrderId,
+              clientName: currentClientName,
+              clientPhone: currentClientPhone,
+              clientCpf: currentClientCpf,
+              total: currentTotal,
+              driveLink: uploadRes.shareableLink,
+              items: currentPricingItems,
+              instance: settings.whatsapp_instance,
+              timestamp: new Date().toISOString()
+            })
+          })
+            .then((res) => {
+              if (!res.ok) console.error(`Erro HTTP no Webhook do n8n (Status: ${res.status}) - Verifique se a URL está correta e o workflow ativo.`);
+            })
+            .catch((err) => console.log('Erro de Rede ao disparar Webhook:', err));
+        }, 5000);
+      }
+
+    } catch (err: any) {
+      console.error("Erro Crítico no Drive:", err);
+      toast.error(`Falha no upload para o Drive: ${err.message || 'Erro inesperado'}`, {
+        id: toastUploadId,
+        duration: 5000
+      });
+
+      await supabase.from('photo_sessions').update({ drive_status: 'error' }).eq('id', currentSessionId);
+      window.dispatchEvent(new CustomEvent('session-updated', { detail: { sessionId: currentSessionId } }));
+      loadData();
+    }
+  }, [loadData, packages]);
+
+  // Sincronização Automática: quando a Lojinha fecha o pagamento remotamente, o PC da fotografia processa
+  const handleRemotePaidOrder = useCallback(async (orderId: string) => {
+    if (processedOrderIdsRef.current.has(orderId)) return;
+    processedOrderIdsRef.current.add(orderId);
+
+    try {
+      const { data: order, error } = await supabase.from('orders')
+        .select(`
+          *,
+          photo_sessions (
+            cover_photo_url,
+            drive_folder_id,
+            client_name,
+            client_phone,
+            photographer_name,
+            clients (
+              name,
+              phone,
+              cpf
+            )
+          )
+        `)
+        .eq('id', orderId)
+        .maybeSingle();
+
+      if (error || !order || order.status !== 'paid') return;
+
+      const clientName = order.photo_sessions?.clients?.name || order.photo_sessions?.client_name || 'Cliente';
+
+      toast.success(`💰 Pagamento confirmado na Lojinha para ${clientName}!`, {
+        description: 'Iniciando upload para o Google Drive e fila de impressão...',
+        duration: 4500
+      });
+
+      // Se houver fotos impressas, abre o modal de impressão imediatamente na tela do fotógrafo
+      if (order.printed_count > 0) {
+        const { data: photosToPrint } = await supabase.from('session_photos')
+          .select('id, original_name, local_original_path, preview_url')
+          .eq('session_id', order.session_id)
+          .eq('status', 'selected')
+          .eq('is_printed', true);
+
+        if (photosToPrint && photosToPrint.length > 0) {
+          setPrintModalData({
+            clientName,
+            photos: photosToPrint
+          });
+          setIsPrintModalOpen(true);
+        }
+      }
+
+      // Executa o envio físico dos arquivos originais armazenados no SSD local deste computador
+      void runOrderBackgroundUpload(order);
+      loadData();
+    } catch (err) {
+      console.error('[PDV] Erro ao sincronizar pedido pago pela Lojinha:', err);
+    }
+  }, [loadData, runOrderBackgroundUpload]);
+
+  // Polling suave a cada 5s para checagem de pedidos pagos pela Lojinha
+  const checkForRemotePaidOrders = useCallback(async () => {
+    try {
+      const { data: storeOrders } = await supabase.from('orders')
+        .select('id, session_id, status, payment_method')
+        .eq('status', 'paid')
+        .order('created_at', { ascending: false })
+        .limit(10);
+
+      if (storeOrders) {
+        for (const o of storeOrders) {
+          if (!processedOrderIdsRef.current.has(o.id)) {
+            const { count } = await supabase.from('session_photos')
+              .select('id', { count: 'exact', head: true })
+              .eq('session_id', o.session_id)
+              .in('status', ['selected', 'error']);
+
+            if (count && count > 0) {
+              await handleRemotePaidOrder(o.id);
+            } else {
+              processedOrderIdsRef.current.add(o.id);
+            }
+          }
+        }
+      }
+    } catch {
+      // Ignora falhas temporárias de rede
+    }
+  }, [handleRemotePaidOrder]);
+
+  // Ouvinte em tempo real e polling para pedidos fechados pela Lojinha
+  useEffect(() => {
+    // 1. Seed inicial dos pedidos que já estão pagos para evitar reprocessamento indevido
+    const seedExistingPaidOrders = async () => {
+      try {
+        const { data } = await supabase
+          .from('orders')
+          .select('id')
+          .eq('status', 'paid')
+          .order('created_at', { ascending: false })
+          .limit(30);
+        if (data) {
+          data.forEach(o => processedOrderIdsRef.current.add(o.id));
+        }
+      } catch (err) {
+        console.warn('[PDV] Falha ao pré-carregar pedidos pagos:', err);
+      }
+    };
+    void seedExistingPaidOrders();
+
+    // 2. Canal Realtime para mudanças na tabela orders
+    const ordersChannel = supabase
+      .channel('pdv-orders-sync')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'orders' },
+        (payload: any) => {
+          loadData();
+          if (payload.new && payload.new.status === 'paid') {
+            void handleRemotePaidOrder(payload.new.id);
+          }
+        }
+      )
+      .subscribe();
+
+    // 3. Polling de redundância a cada 5 segundos
+    const interval = setInterval(() => {
+      void checkForRemotePaidOrders();
+    }, 5000);
+
+    return () => {
+      supabase.removeChannel(ordersChannel);
+      clearInterval(interval);
+    };
+  }, [loadData, handleRemotePaidOrder, checkForRemotePaidOrders]);
+
+  // 2. Fluxo completo de conclusão de pagamento e entrega digital / impressão direto no PDV
   const executeCompleteOrder = async (order: any, method: string) => {
     if (!order) {
       toast.error("Nenhum pedido selecionado.");
       return;
     }
+
+    // Trava para não reprocessar no listener Realtime
+    processedOrderIdsRef.current.add(order.id);
 
     const toastId = toast.loading("Processando confirmação de venda...");
 
@@ -194,27 +467,20 @@ export default function PDV() {
     if (error) {
       console.error("[PDV] Erro ao processar venda no banco de dados:", error);
       toast.error(`Erro ao processar venda no banco de dados: ${error.message || ''}`, { id: toastId });
+      processedOrderIdsRef.current.delete(order.id);
       return;
     }
 
     await supabase.from('photo_sessions').update({ status: 'Convertido/Pago' }).eq('id', order.session_id);
     toast.success("Pagamento confirmado! O upload para o Drive iniciará em background.", { id: toastId, duration: 3000 });
 
-    // Preserva os dados do pedido em escopo imutável antes de limpar a interface
-    const currentSessionId = order.session_id;
-    const currentClientName = order.photo_sessions?.clients?.name || 'Cliente';
-    const currentClientCpf = order.photo_sessions?.clients?.cpf || '';
-    const currentClientPhone = order.photo_sessions?.clients?.phone || '';
-    const currentOrderId = order.id;
-    const currentTotal = order.total_amount;
-    const orderPricing = calculatePricing(order.printed_count, order.digital_count, packages);
-    const currentPricingItems = orderPricing?.items || [];
+    const currentClientName = order.photo_sessions?.clients?.name || order.photo_sessions?.client_name || 'Cliente';
 
     // 1.1 Se o pedido tiver fotos impressas, abre o modal de impressão imediatamente
     if (order.printed_count > 0) {
       const { data: photosToPrint } = await supabase.from('session_photos')
         .select('id, original_name, local_original_path, preview_url')
-        .eq('session_id', currentSessionId)
+        .eq('session_id', order.session_id)
         .eq('status', 'selected')
         .eq('is_printed', true);
 
@@ -232,128 +498,8 @@ export default function PDV() {
     }
     loadData();
 
-    // 2. Rotina de Upload para o Google Drive em background com Realtime Feedback
-    const runBackgroundUpload = async () => {
-      // Toast persistente do Sonner com spinner ativo visível de qualquer tela
-      const toastUploadId = toast.loading(`Iniciando entrega digital para ${currentClientName}...`, {
-        description: "Criando pasta no Google Drive...",
-      });
-
-      try {
-        const { data: settings } = await supabase.from('system_settings').select('google_drive_folder_id, whatsapp_api_url, whatsapp_instance').single();
-
-        const { data: photosToUpload, error: fetchPhotosErr } = await supabase.from('session_photos')
-          .select('id, original_name, local_original_path, has_watermark, watermark_x, watermark_y, watermark_preset')
-          .eq('session_id', currentSessionId)
-          .in('status', ['selected', 'error']);
-
-        if (fetchPhotosErr) throw fetchPhotosErr;
-
-        if (!photosToUpload || photosToUpload.length === 0) {
-          throw new Error("Nenhuma foto selecionada para envio encontrada no banco de dados.");
-        }
-
-        if (!settings?.google_drive_folder_id) {
-          throw new Error("O ID da pasta do Drive não foi configurado nas Configurações do Sistema.");
-        }
-
-        // @ts-ignore
-        if (!window.electronAPI || !window.electronAPI.uploadToDrive) {
-          throw new Error("A ponte de comunicação com o Electron falhou.");
-        }
-
-        // Ouvinte do progresso de cada imagem individualmente (fire-and-forget para evitar race condition)
-        // @ts-ignore
-        const cleanupListener = window.electronAPI.onDrivePhotoProgress ? window.electronAPI.onDrivePhotoProgress((data: any) => {
-          if (data.sessionId === currentSessionId) {
-            // Atualiza status da foto no banco sem bloquear o callback IPC
-            supabase.from('session_photos').update({ status: 'synced', is_printed: false }).eq('id', data.photoId)
-              .then(() => { })
-              .catch((err: any) => console.warn('Erro ao atualizar status da foto:', err));
-
-            // Dispara evento global de atualização em tempo real para os modais
-            window.dispatchEvent(new CustomEvent('drive-photo-synced', { detail: data }));
-
-            // Atualiza o Sonner Toast com contador e nome da foto
-            toast.loading(`Enviando para o Drive (${data.current}/${data.total})`, {
-              id: toastUploadId,
-              description: `Enviada: ${data.fileName} (${data.percentage}%)`
-            });
-          }
-        }) : null;
-
-        // Dispara o upload das fotos originais em alta fidelidade reaproveitando a pasta do cliente
-        // @ts-ignore
-        const uploadRes = await window.electronAPI.uploadToDrive({
-          sessionId: currentSessionId,
-          clientName: currentClientName,
-          clientPhone: currentClientPhone,
-          clientCpf: currentClientPhone || currentClientCpf,
-          photos: photosToUpload,
-          parentFolderId: settings.google_drive_folder_id,
-          existingFolderId: order.photo_sessions?.drive_folder_id || null
-        });
-
-        if (cleanupListener) cleanupListener();
-
-        // Sessão 100% sincronizada
-        await supabase.from('photo_sessions').update({
-          drive_status: 'synced',
-          drive_folder_id: uploadRes.folderId
-        }).eq('id', currentSessionId);
-
-        toast.dismiss(toastUploadId);
-
-        // Feedback de sucesso no Toast com ícone verde
-        toast.success(`Entrega Digital Concluída!`, {
-          description: `${photosToUpload.length} fotos salvas em alta qualidade no Google Drive.`,
-          duration: 3500
-        });
-
-        // Notifica todas as telas que a sessão foi atualizada no banco
-        window.dispatchEvent(new CustomEvent('session-updated', { detail: { sessionId: currentSessionId } }));
-        loadData();
-
-        // Webhook Dinâmico para o n8n (WhatsApp) com Delay Estratégico
-        if (settings?.whatsapp_api_url) {
-          // Aguarda 5s para o Google Drive indexar a pasta antes de acionar o webhook
-          setTimeout(() => {
-            fetch(settings.whatsapp_api_url, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                orderId: currentOrderId,
-                clientName: currentClientName,
-                clientPhone: currentClientPhone,
-                clientCpf: currentClientCpf,
-                total: currentTotal,
-                driveLink: uploadRes.shareableLink,
-                items: currentPricingItems,
-                instance: settings.whatsapp_instance,
-                timestamp: new Date().toISOString()
-              })
-            })
-              .then((res) => {
-                if (!res.ok) console.error(`Erro HTTP no Webhook do n8n (Status: ${res.status}) - Verifique se a URL está correta e o workflow ativo.`);
-              })
-              .catch((err) => console.log('Erro de Rede ao disparar Webhook:', err));
-          }, 5000);
-        }
-
-      } catch (err: any) {
-        console.error("Erro Crítico no Drive:", err);
-        toast.error(`Falha no upload para o Drive: ${err.message || 'Erro inesperado'}`, {
-          id: toastUploadId,
-          duration: 5000
-        });
-
-        await supabase.from('photo_sessions').update({ drive_status: 'error' }).eq('id', currentSessionId);
-        window.dispatchEvent(new CustomEvent('session-updated', { detail: { sessionId: currentSessionId } }));
-        loadData();
-      }
-    };
-
-    runBackgroundUpload();
+    // 2. Rotina de Upload para o Google Drive em background no SSD deste computador
+    void runOrderBackgroundUpload(order);
   };
 
   const handleCheckout = async (method: string) => {
