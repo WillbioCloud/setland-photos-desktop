@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog, shell } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, shell, Notification } from 'electron';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
@@ -277,6 +277,11 @@ async function startOnlineOrdersWorker() {
 }
 
 app.whenReady().then(() => {
+  // Identificador de aplicativo para notificações do Windows (Action Center)
+  if (process.platform === 'win32') {
+    app.setAppUserModelId('com.setland.fotos');
+  }
+
   // Ajuste para o caminho exato onde as fotos brutas são descarregadas no SSD
   const localPhotosDir = path.join(app.getPath('userData'), 'Setland_Cache');
   cleanOldLocalPhotos(localPhotosDir);
@@ -975,6 +980,38 @@ app.whenReady().then(() => {
         console.warn('[Window] Falha ao atualizar titleBarOverlay:', e);
       }
     }
+  });
+
+  // Notificações Nativas do Windows (Toast Pop-up com som)
+  ipcMain.handle('notification:show', async (_event, payload: { title: string; body: string; silent?: boolean }) => {
+    try {
+      if (Notification.isSupported()) {
+        const iconPath = app.isPackaged
+          ? path.join(process.resourcesPath, 'favicon.ico')
+          : path.join(__dirname, '../public/favicon.ico');
+
+        const notification = new Notification({
+          title: payload.title || 'Setland Fotos',
+          body: payload.body || '',
+          icon: fs.existsSync(iconPath) ? iconPath : undefined,
+          silent: payload.silent ?? false,
+        });
+
+        notification.on('click', () => {
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            if (mainWindow.isMinimized()) mainWindow.restore();
+            mainWindow.show();
+            mainWindow.focus();
+          }
+        });
+
+        notification.show();
+        return true;
+      }
+    } catch (err) {
+      console.warn('[Notification] Falha ao disparar notificação nativa:', err);
+    }
+    return false;
   });
 
   // Checagem automática apenas quando o app estiver empacotado em produção

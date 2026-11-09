@@ -42,6 +42,7 @@ export interface ElectronAPI {
   closeWindow?: () => Promise<void>;
   isMaximized?: () => Promise<boolean>;
   setTitleBarOverlay?: (options: { color: string; symbolColor: string; height?: number }) => Promise<void>;
+  showNotification?: (payload: { title: string; body: string; silent?: boolean }) => Promise<boolean>;
 }
 
 declare global {

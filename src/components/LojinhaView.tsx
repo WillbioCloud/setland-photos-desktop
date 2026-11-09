@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { 
   Store, 
   Search, 
@@ -31,6 +31,35 @@ export default function LojinhaView() {
   const [activeTab, setActiveTab] = useState<'awaiting' | 'paid'>('awaiting');
   const [isLoading, setIsLoading] = useState(true);
   const [processingOrderId, setProcessingOrderId] = useState<string | null>(null);
+
+  // Controle de alertas e pop-ups nativos do Windows para novos pedidos
+  const knownAwaitingIdsRef = useRef<Set<string>>(new Set());
+  const isFirstLoadRef = useRef(true);
+
+  // Dispara a Notificação Nativa do Windows (Pop-up do Sistema + Som) e o Toast Sonner
+  const notifyNewStoreOrder = useCallback((orderData: any) => {
+    const clientName = orderData.photo_sessions?.clients?.name || orderData.photo_sessions?.client_name || 'Cliente';
+    const totalStr = Number(orderData.total_amount || 0).toFixed(2).replace('.', ',');
+    const printedCount = orderData.printed_count || 0;
+    const digitalCount = orderData.digital_count || 0;
+    const itemsDesc = `${printedCount} impressa(s) • ${digitalCount} digital(is)`;
+
+    // 1. Notificação Nativa do Windows (Toast Pop-up mesmo com o app minimizado)
+    const api = typeof window !== 'undefined' ? (window.electronAPI || window.electron) : null;
+    if (api?.showNotification) {
+      void api.showNotification({
+        title: '🛍️ Novo Pedido Recebido no Caixa!',
+        body: `Cliente: ${clientName}\nTotal a Cobrar: R$ ${totalStr} (${itemsDesc})`,
+        silent: false,
+      });
+    }
+
+    // 2. Alerta visual interno na interface
+    toast.info(`🛍️ Novo Pedido: ${clientName} — R$ ${totalStr}`, {
+      description: `Aguardando cobrança no balcão. ${itemsDesc}`,
+      duration: 6000,
+    });
+  }, []);
 
   // Carrega pacotes ativos para o motor de precificação
   useEffect(() => {
@@ -67,20 +96,57 @@ export default function LojinhaView() {
         .order('created_at', { ascending: false });
 
       if (error) throw error;
-      if (data) setOrders(data);
+      if (data) {
+        setOrders(data);
+
+        if (isFirstLoadRef.current) {
+          // Na inicialização, memoriza os pedidos existentes sem disparar alerta
+          data.filter(o => o.status === 'awaiting_store').forEach(o => knownAwaitingIdsRef.current.add(o.id));
+          isFirstLoadRef.current = false;
+        } else {
+          // Nas checagens seguintes (polling ou recarga), notifica qualquer um novo
+          for (const order of data) {
+            if (order.status === 'awaiting_store' && !knownAwaitingIdsRef.current.has(order.id)) {
+              knownAwaitingIdsRef.current.add(order.id);
+              notifyNewStoreOrder(order);
+            }
+          }
+        }
+      }
     } catch (err: any) {
       console.warn('[LojinhaView] Erro ao buscar pedidos:', err);
     } finally {
       setIsLoading(false);
     }
-  }, []);
+  }, [notifyNewStoreOrder]);
 
   // Assinatura Realtime no Supabase + Polling a cada 5s
   useEffect(() => {
     loadOrders();
 
     const channel = supabase.channel('lojinha-orders-realtime')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, () => {
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, async (payload: any) => {
+        // Alerta imediato via WebSocket no momento exato em que a Fotografia despacha o pedido
+        if (payload.new && payload.new.status === 'awaiting_store') {
+          if (!knownAwaitingIdsRef.current.has(payload.new.id)) {
+            const { data: newOrderData } = await supabase
+              .from('orders')
+              .select(`
+                *,
+                photo_sessions (
+                  client_name,
+                  clients ( name )
+                )
+              `)
+              .eq('id', payload.new.id)
+              .maybeSingle();
+
+            if (newOrderData && !knownAwaitingIdsRef.current.has(newOrderData.id)) {
+              knownAwaitingIdsRef.current.add(newOrderData.id);
+              notifyNewStoreOrder(newOrderData);
+            }
+          }
+        }
         loadOrders();
       })
       .subscribe();
@@ -91,7 +157,7 @@ export default function LojinhaView() {
       supabase.removeChannel(channel);
       clearInterval(interval);
     };
-  }, [loadOrders]);
+  }, [loadOrders, notifyNewStoreOrder]);
 
   // Ação de confirmação de pagamento
   const handleConfirmPayment = async (order: any, method: string = 'lojinha') => {

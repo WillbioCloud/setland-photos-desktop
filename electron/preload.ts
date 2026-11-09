@@ -67,6 +67,10 @@ const api = {
   isMaximized: () => ipcRenderer.invoke('window:isMaximized'),
   setTitleBarOverlay: (options: { color: string; symbolColor: string; height?: number }) =>
     ipcRenderer.invoke('window:setTitleBarOverlay', options),
+
+  // Notificações Nativas do Sistema Operacional (Windows Pop-up)
+  showNotification: (payload: { title: string; body: string; silent?: boolean }) =>
+    ipcRenderer.invoke('notification:show', payload),
 };
 
 contextBridge.exposeInMainWorld('electronAPI', api);
