@@ -23,6 +23,7 @@ export default function PDV() {
         *,
         photo_sessions (
           cover_photo_url,
+          drive_folder_id,
           clients (
             name,
             phone,
@@ -103,6 +104,7 @@ export default function PDV() {
         *,
         photo_sessions (
           cover_photo_url,
+          drive_folder_id,
           clients ( name, phone, cpf )
         )
       `)
@@ -243,7 +245,7 @@ export default function PDV() {
         const { data: photosToUpload, error: fetchPhotosErr } = await supabase.from('session_photos')
           .select('id, original_name, local_original_path, has_watermark, watermark_x, watermark_y, watermark_preset')
           .eq('session_id', currentSessionId)
-          .eq('status', 'selected');
+          .in('status', ['selected', 'error']);
 
         if (fetchPhotosErr) throw fetchPhotosErr;
 
@@ -280,14 +282,15 @@ export default function PDV() {
           }
         }) : null;
 
-        // Dispara o upload das fotos originais em alta fidelidade
+        // Dispara o upload das fotos originais em alta fidelidade reaproveitando a pasta do cliente
         // @ts-ignore
         const uploadRes = await window.electronAPI.uploadToDrive({
           sessionId: currentSessionId,
           clientName: currentClientName,
           clientCpf: currentClientCpf,
           photos: photosToUpload,
-          parentFolderId: settings.google_drive_folder_id
+          parentFolderId: settings.google_drive_folder_id,
+          existingFolderId: order.photo_sessions?.drive_folder_id || null
         });
 
         if (cleanupListener) cleanupListener();

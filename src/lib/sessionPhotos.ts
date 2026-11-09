@@ -59,6 +59,8 @@ export interface SessionPhoto {
   originalName: string;
   /** Fonte preferencial para exibição (SSD local >> Nuvem). */
   url: string;
+  /** Imagem limpa em Full HD (~200KB) para exibição a 60 FPS */
+  displayUrl?: string | null;
   /** Caminho físico no SSD do quiosque (file:///...). */
   localOriginalPath: string | null;
   /** Miniatura pública do Supabase Storage (Nuvem / Vitrine). */
@@ -140,11 +142,27 @@ export function shapeSessionPhoto(row: any): SessionPhoto {
   const previewUrl = row?.previewUrl ?? row?.preview_url ?? null;
   const status = row?.status || (row?.isPurchased === true || row?.is_purchased === true ? 'synced' : 'pending');
 
+  // Recupera ou deriva o caminho da versão limpa Full HD (~200KB) gerada no cache SSD
+  const displayUrl = (() => {
+    if (row?.displayUrl || row?.display_url) return row.displayUrl || row.display_url;
+    if (localOriginalPath && typeof localOriginalPath === 'string') {
+      const lastSlash = localOriginalPath.lastIndexOf('/');
+      if (lastSlash !== -1) {
+        const dir = localOriginalPath.substring(0, lastSlash + 1);
+        const file = localOriginalPath.substring(lastSlash + 1);
+        const nameWithoutExt = file.replace(/\.[^/.]+$/, "");
+        return `${dir}display_${nameWithoutExt}.webp`;
+      }
+    }
+    return null;
+  })();
+
   return {
     id: String(row?.id ?? ''),
     sessionId: row?.sessionId ?? row?.session_id ?? null,
     originalName: row?.originalName ?? row?.original_name ?? 'Foto',
-    url: localOriginalPath || previewUrl || row?.url || '',
+    url: displayUrl || localOriginalPath || previewUrl || row?.url || '',
+    displayUrl: displayUrl || null,
     localOriginalPath: localOriginalPath || null,
     previewUrl: previewUrl || null,
     status,

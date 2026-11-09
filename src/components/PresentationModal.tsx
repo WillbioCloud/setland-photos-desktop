@@ -225,6 +225,18 @@ export default function PresentationModal({
     }
   }, [isOpen]);
 
+  // Preload das imagens vizinhas para decodificação prévia na GPU (navegação instantânea a 60 FPS)
+  useEffect(() => {
+    if (!isOpen || photos.length === 0) return;
+    const indicesToPreload = [currentIndex + 1, currentIndex + 2, currentIndex - 1];
+    indicesToPreload.forEach(idx => {
+      if (idx >= 0 && idx < photos.length && photos[idx]?.url) {
+        const img = new Image();
+        img.src = photos[idx].url;
+      }
+    });
+  }, [isOpen, currentIndex, photos]);
+
   // Lógica de Drag & Drop da Marca d'Água estritamente dentro da foto atual
   const handleMouseDown = (e: React.MouseEvent) => {
     e.preventDefault();
@@ -345,6 +357,13 @@ export default function PresentationModal({
           src={currentPhoto.url} 
           alt="Foto da Sessão" 
           onLoad={handleImageLoad}
+          decoding="async"
+          onError={(e) => {
+            const fallback = (currentPhoto as any).localOriginalPath || (currentPhoto as any).previewUrl;
+            if (fallback && e.currentTarget.src !== fallback) {
+              e.currentTarget.src = fallback;
+            }
+          }}
           className="max-h-screen max-w-full w-auto h-auto block select-none pointer-events-none object-contain"
         />
 

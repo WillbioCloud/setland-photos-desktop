@@ -128,9 +128,9 @@ export default function ClientProfileModal({ isOpen, onClose, client }: ClientPr
   const presentablePhotos = sessionPhotos.filter(photo => Boolean(photo.url));
   // Data de referência para projetar 30 dias de retenção quando a foto não tem `expires_at`.
   const sessionReferenceDate = client?.createdAt || client?.date;
-  // Fonte da imagem: prioriza o original do SSD e cai para a miniatura da Nuvem.
-  const getPhotoSource = (photo: any) => photo?.localOriginalPath || photo?.previewUrl || photo?.url || '';
-  const getCloudSource = (photo: any) => photo?.previewUrl || photo?.localOriginalPath || photo?.url || '';
+  // Fonte da imagem: prioriza a versão display limpa Full HD (~200KB), depois o original do SSD e cai para a miniatura da Nuvem.
+  const getPhotoSource = (photo: any) => photo?.displayUrl || photo?.localOriginalPath || photo?.previewUrl || photo?.url || '';
+  const getCloudSource = (photo: any) => photo?.previewUrl || photo?.displayUrl || photo?.localOriginalPath || photo?.url || '';
 
   const handleDeletePhoto = async (photoId: string | number) => {
     const toastId = toast.loading("Removendo foto do banco de dados...");
@@ -352,6 +352,8 @@ export default function ClientProfileModal({ isOpen, onClose, client }: ClientPr
                         <img
                           src={source}
                           alt={photo.originalName || "Foto da sessão"}
+                          loading="lazy"
+                          decoding="async"
                           onError={(e) => {
                             const fallback = getCloudSource(photo);
                             if (fallback && e.currentTarget.src !== fallback) {
@@ -403,6 +405,8 @@ export default function ClientProfileModal({ isOpen, onClose, client }: ClientPr
                         <img
                           src={cloudSource}
                           alt={photo.originalName || "Miniatura WebP da Nuvem"}
+                          loading="lazy"
+                          decoding="async"
                           onError={(e) => {
                             const fallback = getPhotoSource(photo);
                             if (fallback && e.currentTarget.src !== fallback) {

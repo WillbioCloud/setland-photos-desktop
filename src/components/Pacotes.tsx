@@ -10,6 +10,7 @@ interface PacotesProps {
 export default function Pacotes({ userRole }: PacotesProps) {
   const [searchTerm, setSearchTerm] = useState('');
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [editingPackage, setEditingPackage] = useState<any | null>(null);
   const [packagesList, setPackagesList] = useState<any[]>([]);
   
   const loadPackages = async () => {
@@ -61,8 +62,11 @@ export default function Pacotes({ userRole }: PacotesProps) {
           
           {isAdminAuth && (
             <button 
-              onClick={() => setIsModalOpen(true)}
-              className="flex items-center gap-2 px-6 py-2.5 bg-brand-accent text-brand-accent-fg rounded-full text-sm font-semibold transition-colors shadow-sm hover:opacity-90"
+              onClick={() => {
+                setEditingPackage(null);
+                setIsModalOpen(true);
+              }}
+              className="flex items-center gap-2 px-6 py-2.5 bg-brand-accent text-brand-accent-fg rounded-full text-sm font-semibold transition-colors shadow-sm hover:opacity-90 cursor-pointer"
             >
               <Plus className="h-4 w-4" />
               Novo Pacote
@@ -135,12 +139,20 @@ export default function Pacotes({ userRole }: PacotesProps) {
                 
                 {isAdminAuth && (
                   <div className="flex gap-2">
-                    <button className="p-2.5 rounded-xl bg-brand-bg hover:bg-brand-accent/10 hover:text-brand-accent text-brand-muted transition-colors border border-brand-border shadow-sm">
+                    <button 
+                      onClick={() => {
+                        setEditingPackage(pkg);
+                        setIsModalOpen(true);
+                      }}
+                      className="p-2.5 rounded-xl bg-brand-bg hover:bg-brand-accent/10 hover:text-brand-accent text-brand-muted transition-colors border border-brand-border shadow-sm cursor-pointer"
+                      title="Editar pacote"
+                    >
                       <Edit2 className="h-4 w-4" />
                     </button>
                     <button 
                       onClick={() => handleToggleActive(pkg.id, pkg.active)}
-                      className={`p-2.5 rounded-xl bg-brand-bg transition-colors border border-brand-border shadow-sm ${pkg.active ? 'hover:bg-brand-danger/10 hover:text-brand-danger text-brand-muted' : 'hover:bg-emerald-500/10 hover:text-emerald-600 text-brand-muted'}`}
+                      className={`p-2.5 rounded-xl bg-brand-bg transition-colors border border-brand-border shadow-sm cursor-pointer ${pkg.active ? 'hover:bg-brand-danger/10 hover:text-brand-danger text-brand-muted' : 'hover:bg-emerald-500/10 hover:text-emerald-600 text-brand-muted'}`}
+                      title={pkg.active ? 'Desativar pacote' : 'Ativar pacote'}
                     >
                       {pkg.active ? <PowerOff className="h-4 w-4" /> : <Power className="h-4 w-4" />}
                     </button>
@@ -152,7 +164,14 @@ export default function Pacotes({ userRole }: PacotesProps) {
         })}
       </div>
 
-      <PackageModal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} />
+      <PackageModal 
+        isOpen={isModalOpen} 
+        onClose={() => {
+          setIsModalOpen(false);
+          setEditingPackage(null);
+        }} 
+        editingPackage={editingPackage}
+      />
     </div>
   );
 }

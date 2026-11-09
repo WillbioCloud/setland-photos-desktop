@@ -5,7 +5,7 @@ import { fileURLToPath } from 'url';
 import sharp from 'sharp';
 import { createClient } from '@supabase/supabase-js';
 import { processSingleImage } from './imageProcessor';
-import { createClientFolder, uploadPhoto } from './driveService';
+import { createClientFolder, ensureClientFolder, uploadPhoto, sanitizeDriveFolderId } from './driveService';
 import dotenv from 'dotenv';
 import { autoUpdater } from 'electron-updater';
 
@@ -401,7 +401,7 @@ app.whenReady().then(() => {
     const processedPhotos = [];
 
     for (const imagePath of filePaths) {
-      const { originalName, previewPath, localOriginalPath } = await processSingleImage(
+      const { originalName, previewPath, localOriginalPath, displayPath } = await processSingleImage(
         imagePath,
         tempOutputDir,
         watermarkPath,
@@ -411,8 +411,10 @@ app.whenReady().then(() => {
 
       const cleanPreview = previewPath.replace(/\\/g, '/').replace(/^\/+/, '');
       const cleanOriginal = localOriginalPath.replace(/\\/g, '/').replace(/^\/+/, '');
+      const cleanDisplay = displayPath ? displayPath.replace(/\\/g, '/').replace(/^\/+/, '') : '';
       const localPreviewUrl = `file:///${cleanPreview}`;
       const localOriginalUrl = `file:///${cleanOriginal}`;
+      const localDisplayUrl = cleanDisplay ? `file:///${cleanDisplay}` : localPreviewUrl;
       let photoDbId = null;
 
       // Upload da miniatura compactada para o Supabase Storage se houver conexao
@@ -461,12 +463,14 @@ app.whenReady().then(() => {
         }
       }
 
-      // O app Desktop SEMPRE consome o arquivo local do SSD (file://) com o ID real do banco
+      // O app Desktop consome o arquivo display limpo do SSD em Full HD (~200KB) com ID real do banco
       processedPhotos.push({
         id: photoDbId || processedCount + 1,
         originalName,
-        url: localPreviewUrl,
+        url: localDisplayUrl || localPreviewUrl,
+        displayUrl: localDisplayUrl,
         localOriginalPath: localOriginalUrl,
+        previewUrl: localPreviewUrl,
         status: 'pending'
       });
 
@@ -479,10 +483,20 @@ app.whenReady().then(() => {
   });
 
   ipcMain.handle('drive:uploadPurchased', async (event, payload) => {
-    const { clientName, clientCpf, photos, parentFolderId, sessionId } = payload;
+    const { clientName, clientCpf, photos, parentFolderId, sessionId, existingFolderId } = payload;
 
     try {
-      const folderId = await createClientFolder(clientName, clientCpf, parentFolderId);
+      let targetFolderId = existingFolderId;
+      if (!targetFolderId && sessionId) {
+        try {
+          const { data: sess } = await supabase.from('photo_sessions').select('drive_folder_id').eq('id', sessionId).maybeSingle();
+          if (sess?.drive_folder_id) targetFolderId = sess.drive_folder_id;
+        } catch (sessErr) {
+          console.warn('[Drive] Aviso ao consultar drive_folder_id existente da sessão:', sessErr);
+        }
+      }
+
+      const folderId = await ensureClientFolder(clientName, clientCpf, parentFolderId, targetFolderId);
 
       let uploadedCount = 0;
       for (const photo of photos) {
@@ -781,7 +795,7 @@ app.whenReady().then(() => {
     const processedPhotos = [];
 
     for (const imagePath of filePaths) {
-      const { originalName, previewPath, localOriginalPath } = await processSingleImage(
+      const { originalName, previewPath, localOriginalPath, displayPath } = await processSingleImage(
         imagePath,
         tempOutputDir,
         watermarkPath,
@@ -791,8 +805,10 @@ app.whenReady().then(() => {
 
       const cleanPreview = previewPath.replace(/\\/g, '/').replace(/^\/+/, '');
       const cleanOriginal = localOriginalPath.replace(/\\/g, '/').replace(/^\/+/, '');
+      const cleanDisplay = displayPath ? displayPath.replace(/\\/g, '/').replace(/^\/+/, '') : '';
       const localPreviewUrl = `file:///${cleanPreview}`;
       const localOriginalUrl = `file:///${cleanOriginal}`;
+      const localDisplayUrl = cleanDisplay ? `file:///${cleanDisplay}` : localPreviewUrl;
       let photoDbId = null;
 
       try {
@@ -837,7 +853,8 @@ app.whenReady().then(() => {
       processedPhotos.push({
         id: photoDbId || Date.now() + processedCount,
         originalName,
-        url: localOriginalUrl,
+        url: localDisplayUrl || localOriginalUrl,
+        displayUrl: localDisplayUrl,
         localOriginalPath: localOriginalUrl,
         previewUrl: localPreviewUrl,
         status: 'pending'

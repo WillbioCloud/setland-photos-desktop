@@ -43,8 +43,12 @@ export default function DriveSyncModal({ isOpen, onClose, client }: DriveSyncMod
 
       const photosToUpload = purchasedPhotos.map((p: any) => ({
         id: p.id,
-        original_name: p.originalName,
-        local_original_path: p.localOriginalPath
+        original_name: p.originalName || p.original_name,
+        local_original_path: p.localOriginalPath || p.local_original_path,
+        has_watermark: p.hasWatermark ?? p.has_watermark,
+        watermark_x: p.watermarkX ?? p.watermark_x,
+        watermark_y: p.watermarkY ?? p.watermark_y,
+        watermark_preset: p.watermarkPreset ?? p.watermark_preset,
       }));
 
       // @ts-ignore
@@ -53,7 +57,8 @@ export default function DriveSyncModal({ isOpen, onClose, client }: DriveSyncMod
         clientName: client.name || 'Cliente',
         clientCpf: client.cpf || '', 
         photos: photosToUpload,
-        parentFolderId: settings.google_drive_folder_id
+        parentFolderId: settings.google_drive_folder_id,
+        existingFolderId: client.driveFolderId || client.drive_folder_id || null
       });
 
       await supabase.from('photo_sessions').update({ 
