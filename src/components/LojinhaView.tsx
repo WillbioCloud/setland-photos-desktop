@@ -34,10 +34,20 @@ export default function LojinhaView() {
 
   // Controle de alertas e pop-ups nativos do Windows para novos pedidos
   const knownAwaitingIdsRef = useRef<Set<string>>(new Set());
+  const notifiedOrderIdsRef = useRef<Set<string>>(new Set());
   const isFirstLoadRef = useRef(true);
 
   // Dispara a Notificação Nativa do Windows (Pop-up do Sistema + Som) e o Toast Sonner
   const notifyNewStoreOrder = useCallback((orderData: any) => {
+    if (!orderData?.id) return;
+
+    // Trava de deduplicação estrita: se este pedido já foi notificado, ignora sumariamente!
+    if (notifiedOrderIdsRef.current.has(orderData.id)) {
+      return;
+    }
+    notifiedOrderIdsRef.current.add(orderData.id);
+    knownAwaitingIdsRef.current.add(orderData.id);
+
     const clientName = orderData.photo_sessions?.clients?.name || orderData.photo_sessions?.client_name || 'Cliente';
     const totalStr = Number(orderData.total_amount || 0).toFixed(2).replace('.', ',');
     const printedCount = orderData.printed_count || 0;
@@ -101,13 +111,15 @@ export default function LojinhaView() {
 
         if (isFirstLoadRef.current) {
           // Na inicialização, memoriza os pedidos existentes sem disparar alerta
-          data.filter(o => o.status === 'awaiting_store').forEach(o => knownAwaitingIdsRef.current.add(o.id));
+          data.filter(o => o.status === 'awaiting_store').forEach(o => {
+            knownAwaitingIdsRef.current.add(o.id);
+            notifiedOrderIdsRef.current.add(o.id);
+          });
           isFirstLoadRef.current = false;
         } else {
           // Nas checagens seguintes (polling ou recarga), notifica qualquer um novo
           for (const order of data) {
-            if (order.status === 'awaiting_store' && !knownAwaitingIdsRef.current.has(order.id)) {
-              knownAwaitingIdsRef.current.add(order.id);
+            if (order.status === 'awaiting_store' && !notifiedOrderIdsRef.current.has(order.id)) {
               notifyNewStoreOrder(order);
             }
           }
@@ -120,15 +132,26 @@ export default function LojinhaView() {
     }
   }, [notifyNewStoreOrder]);
 
+  // Mantém referência estável para loadOrders sem recriar o canal de Realtime a cada render
+  const loadOrdersRef = useRef(loadOrders);
+  useEffect(() => {
+    loadOrdersRef.current = loadOrders;
+  });
+
   // Assinatura Realtime no Supabase + Polling a cada 5s
   useEffect(() => {
-    loadOrders();
+    loadOrdersRef.current();
 
     const channel = supabase.channel('lojinha-orders-realtime')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, async (payload: any) => {
         // Alerta imediato via WebSocket no momento exato em que a Fotografia despacha o pedido
         if (payload.new && payload.new.status === 'awaiting_store') {
-          if (!knownAwaitingIdsRef.current.has(payload.new.id)) {
+          const orderId = payload.new.id;
+          if (orderId && !notifiedOrderIdsRef.current.has(orderId)) {
+            // Trava imediatamente de forma síncrona antes de qualquer await assíncrono!
+            notifiedOrderIdsRef.current.add(orderId);
+            knownAwaitingIdsRef.current.add(orderId);
+
             const { data: newOrderData } = await supabase
               .from('orders')
               .select(`
@@ -138,26 +161,29 @@ export default function LojinhaView() {
                   clients ( name )
                 )
               `)
-              .eq('id', payload.new.id)
+              .eq('id', orderId)
               .maybeSingle();
 
-            if (newOrderData && !knownAwaitingIdsRef.current.has(newOrderData.id)) {
-              knownAwaitingIdsRef.current.add(newOrderData.id);
+            if (newOrderData) {
               notifyNewStoreOrder(newOrderData);
+            } else {
+              notifyNewStoreOrder(payload.new);
             }
           }
         }
-        loadOrders();
+        loadOrdersRef.current();
       })
       .subscribe();
 
-    const interval = setInterval(loadOrders, 5000);
+    const interval = setInterval(() => {
+      loadOrdersRef.current();
+    }, 5000);
 
     return () => {
       supabase.removeChannel(channel);
       clearInterval(interval);
     };
-  }, [loadOrders, notifyNewStoreOrder]);
+  }, [notifyNewStoreOrder]);
 
   // Ação de confirmação de pagamento
   const handleConfirmPayment = async (order: any, method: string = 'lojinha') => {

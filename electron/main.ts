@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog, shell, Notification } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, shell, Notification, nativeImage } from 'electron';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
@@ -10,6 +10,22 @@ import dotenv from 'dotenv';
 import { autoUpdater } from 'electron-updater';
 
 dotenv.config();
+
+// Trava de Instância Única:
+// Impede que ativações do Windows Toast, múltiplos cliques ou chamadas externas abram
+// processos secundários do Electron (que causavam a abertura da tela padrão de boas-vindas do Electron
+// e conflito de arquivos de cache GPUPersistentCache / DawnGraphiteCache).
+const gotTheLock = app.requestSingleInstanceLock();
+if (!gotTheLock) {
+  console.log('[App] Instância secundária detectada. Encerrando processo secundário imediatamente...');
+  app.quit();
+  process.exit(0);
+}
+
+// Configura o ID do aplicativo no Windows no nível mais inicial possível
+if (process.platform === 'win32') {
+  app.setAppUserModelId('com.setland.fotos');
+}
 
 // Configuração do Auto-Updater (GitHub Releases)
 autoUpdater.autoDownload = true;
@@ -60,14 +76,30 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 
 let mainWindow: BrowserWindow | null = null;
 
+app.on('second-instance', (_event, _commandLine, _workingDirectory) => {
+  // Quando uma segunda instância é acionada (ou ativada pelo Windows Toast Notification),
+  // foca e restaura a janela principal do app sem abrir janelas extras
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.show();
+    mainWindow.focus();
+  }
+});
+
 function resolveAppIconPath(): string | undefined {
   const candidates = [
     app.isPackaged ? path.join(process.resourcesPath, 'favicon.ico') : '',
+    app.isPackaged ? path.join(process.resourcesPath, 'icon.png') : '',
     path.join(app.getAppPath(), 'public', 'favicon.ico'),
+    path.join(app.getAppPath(), 'public', 'icon.png'),
     path.join(app.getAppPath(), 'dist', 'favicon.ico'),
+    path.join(app.getAppPath(), 'dist', 'icon.png'),
     path.join(__dirname, '../public/favicon.ico'),
+    path.join(__dirname, '../public/icon.png'),
     path.join(__dirname, '../dist/favicon.ico'),
+    path.join(__dirname, '../dist/icon.png'),
     path.join(process.cwd(), 'public', 'favicon.ico'),
+    path.join(process.cwd(), 'public', 'icon.png'),
   ].filter(Boolean);
 
   for (const candidate of candidates) {
@@ -78,8 +110,28 @@ function resolveAppIconPath(): string | undefined {
   return undefined;
 }
 
+function resolveNotificationIconPath(): string | undefined {
+  // Windows Action Center Toasts aceitam nativamente PNG (formato recomendado e sem falhas)
+  const candidates = [
+    app.isPackaged ? path.join(process.resourcesPath, 'icon.png') : '',
+    path.join(app.getAppPath(), 'public', 'icon.png'),
+    path.join(app.getAppPath(), 'dist', 'icon.png'),
+    path.join(__dirname, '../public/icon.png'),
+    path.join(__dirname, '../dist/icon.png'),
+    path.join(process.cwd(), 'public', 'icon.png'),
+  ].filter(Boolean);
+
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) {
+      return candidate;
+    }
+  }
+  return resolveAppIconPath();
+}
+
 function createWindow() {
-  const appIcon = resolveAppIconPath();
+  const iconPath = resolveAppIconPath();
+  const appIcon = iconPath ? nativeImage.createFromPath(iconPath) : undefined;
 
   mainWindow = new BrowserWindow({
     width: 1366,
@@ -87,7 +139,7 @@ function createWindow() {
     minWidth: 1024,
     minHeight: 700,
     title: "Setland Fotos - Terminal Quiosque",
-    icon: appIcon,
+    icon: (appIcon && !appIcon.isEmpty()) ? appIcon : iconPath,
     backgroundColor: '#0D020C',
     autoHideMenuBar: true, // Remove menu padrão 'File, Edit, View'
     titleBarStyle: 'hidden', // Oculta barra cinza padrão do Windows
@@ -105,7 +157,7 @@ function createWindow() {
     }
   });
 
-  if (appIcon && process.platform === 'win32') {
+  if (appIcon && !appIcon.isEmpty() && process.platform === 'win32') {
     mainWindow.setIcon(appIcon);
   }
 
@@ -123,6 +175,7 @@ function createWindow() {
 
 app.commandLine.appendSwitch('disable-gpu-shader-disk-cache');
 app.commandLine.appendSwitch('disable-features', 'DirectCompositionVideoOverlays');
+app.commandLine.appendSwitch('disable-gpu-persistent-cache');
 
 /**
  * Robô Local: Varre a pasta de cache de fotos e deleta pastas com mais de 30 dias
@@ -301,11 +354,6 @@ async function startOnlineOrdersWorker() {
 }
 
 app.whenReady().then(() => {
-  // Identificador de aplicativo para notificações do Windows (Action Center)
-  if (process.platform === 'win32') {
-    app.setAppUserModelId('com.setland.fotos');
-  }
-
   // Ajuste para o caminho exato onde as fotos brutas são descarregadas no SSD
   const localPhotosDir = path.join(app.getPath('userData'), 'Setland_Cache');
   cleanOldLocalPhotos(localPhotosDir);
@@ -1010,12 +1058,12 @@ app.whenReady().then(() => {
   ipcMain.handle('notification:show', async (_event, payload: { title: string; body: string; silent?: boolean }) => {
     try {
       if (Notification.isSupported()) {
-        const iconPath = resolveAppIconPath();
+        const notifIcon = resolveNotificationIconPath() || resolveAppIconPath();
 
         const notification = new Notification({
           title: payload.title || 'Setland Fotos',
           body: payload.body || '',
-          icon: iconPath,
+          icon: notifIcon,
           silent: payload.silent ?? false,
         });
 

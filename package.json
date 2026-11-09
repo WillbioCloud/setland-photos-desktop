@@ -80,6 +80,10 @@
         "to": "favicon.ico"
       },
       {
+        "from": "public/icon.png",
+        "to": "icon.png"
+      },
+      {
         "from": "credentials.json",
         "to": "credentials.json"
       },

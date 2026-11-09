@@ -22,6 +22,9 @@ export default defineConfig({
         // Ponto de entrada do processo principal do Electron
         entry: 'electron/main.ts',
         vite: {
+          build: {
+            minify: false,
+          },
           define: {
             'process.env.VITE_SUPABASE_URL': JSON.stringify(process.env.VITE_SUPABASE_URL || 'https://egopjbavxkrrpxxysmck.supabase.co'),
             'process.env.VITE_SUPABASE_ANON_KEY': JSON.stringify(process.env.VITE_SUPABASE_ANON_KEY || 'sb_publishable_h3F7yDPQRlFeVtTGaIP0XA_h57ZtfeA'),
@@ -33,6 +36,7 @@ export default defineConfig({
         input: 'electron/preload.ts',
         vite: {
           build: {
+            minify: false,
             rollupOptions: {
               output: {
                 format: 'cjs',
