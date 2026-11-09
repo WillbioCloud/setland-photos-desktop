@@ -98,80 +98,78 @@ export default function SelectionFormatModal({
         }
       }
 
-      // 2. Consulta TODAS as fotos que já pertencem à compra da sessão (acumuladas)
-      const { data: allPurchasedPhotos, error: fetchErr } = await supabase.from('session_photos')
-        .select('id, is_printed, status')
-        .eq('session_id', sessionId)
-        .in('status', ['selected', 'synced']);
-
-      if (fetchErr) throw fetchErr;
-
-      const allPrintedCount = (allPurchasedPhotos || []).filter(p => p.is_printed === true).length;
-      const allDigitalCount = (allPurchasedPhotos || []).filter(p => !p.is_printed).length;
-
-      // 3. Recalcula a precificação total acumulada da sessão
+      // 2. Busca pacotes ativos para a precificação
       const { data: pkgs } = await supabase.from('packages').select('*').eq('active', true);
-      const pricing = calculatePricing(allPrintedCount, allDigitalCount, (pkgs || []) as PackageDef[]);
 
-      // 4. Verifica se já existe um pedido para esta sessão (evita duplicar cards no PDV)
-      const { data: existingOrder } = await supabase.from('orders')
+      // 3. Verifica se existe um pedido em aberto (ainda NÃO pago) para esta sessão
+      const { data: openOrder } = await supabase.from('orders')
         .select('*')
         .eq('session_id', sessionId)
+        .in('status', ['pending', 'awaiting_store'])
         .order('created_at', { ascending: false })
         .limit(1)
         .maybeSingle();
 
-      if (existingOrder) {
-        if (['pending', 'awaiting_store'].includes(existingOrder.status)) {
-          // Caso 1: Pedido ainda não pago -> atualiza totais unificados no mesmo pedido
-          const { error: updateErr } = await supabase.from('orders').update({
-            total_amount: pricing.totalAmount,
-            printed_count: allPrintedCount,
-            digital_count: allDigitalCount
-          }).eq('id', existingOrder.id);
+      if (openOrder) {
+        // CASO 1: O cliente já tem um pedido aberto que AINDA NÃO FOI PAGO (está no PDV ou Lojinha)
+        // O cliente pediu para adicionar mais fotos antes de fechar a conta.
+        // Aqui sim unificamos no mesmo pedido todas as fotos 'selected' (ainda não pagas) da sessão.
+        const { data: pendingPhotos, error: fetchPendingErr } = await supabase.from('session_photos')
+          .select('id, is_printed')
+          .eq('session_id', sessionId)
+          .eq('status', 'selected');
 
-          if (updateErr) throw updateErr;
-        } else if (existingOrder.status === 'paid') {
-          // Caso 2: Cliente comprou fotos adicionais após o pagamento inicial
-          // Reabre o pedido existente para cobrança no caixa mantendo a mesma referência de sessão e Drive
-          const { error: updateErr } = await supabase.from('orders').update({
-            total_amount: pricing.totalAmount,
-            printed_count: allPrintedCount,
-            digital_count: allDigitalCount,
-            status: 'pending'
-          }).eq('id', existingOrder.id);
+        if (fetchPendingErr) throw fetchPendingErr;
 
-          if (updateErr) throw updateErr;
-        } else {
-          // Caso 3: Status cancelado ou outro -> insere novo
-          const { error: insertErr } = await supabase.from('orders').insert({
-            session_id: sessionId,
-            total_amount: pricing.totalAmount,
-            status: 'pending',
-            printed_count: allPrintedCount,
-            digital_count: allDigitalCount
-          });
+        const mergedPrintedCount = (pendingPhotos || []).filter(p => p.is_printed === true).length;
+        const mergedDigitalCount = (pendingPhotos || []).filter(p => !p.is_printed).length;
+        const mergedPricing = calculatePricing(mergedPrintedCount, mergedDigitalCount, (pkgs || []) as PackageDef[]);
 
-          if (insertErr) throw insertErr;
-        }
+        const { error: updateErr } = await supabase.from('orders').update({
+          total_amount: mergedPricing.totalAmount,
+          printed_count: mergedPrintedCount,
+          digital_count: mergedDigitalCount
+        }).eq('id', openOrder.id);
+
+        if (updateErr) throw updateErr;
+
+        toast.success(`Pedido unificado no caixa com as novas fotos!`, {
+          id: toastId,
+          description: `Total atualizado: ${mergedPrintedCount} impressa(s) • ${mergedDigitalCount} digital(is)`
+        });
       } else {
-        // Caso 4: Primeiro pedido da sessão
+        // CASO 2: O pedido anterior já foi PAGO (status 'paid') ou é a primeira compra
+        // As fotos anteriores já foram finalizadas e pagas ('synced').
+        // As fotos selecionadas agora ('selected') representam uma NOVA compra adicional/avulsa.
+        // Cobramos APENAS pelas novas fotos selecionadas agora!
+        const { data: currentBatchPhotos, error: fetchBatchErr } = await supabase.from('session_photos')
+          .select('id, is_printed')
+          .eq('session_id', sessionId)
+          .eq('status', 'selected');
+
+        if (fetchBatchErr) throw fetchBatchErr;
+
+        const newPrintedCount = (currentBatchPhotos || []).filter(p => p.is_printed === true).length;
+        const newDigitalCount = (currentBatchPhotos || []).filter(p => !p.is_printed).length;
+        const newPricing = calculatePricing(newPrintedCount, newDigitalCount, (pkgs || []) as PackageDef[]);
+
+        // Cria um NOVO pedido separado no PDV contendo APENAS a nova foto / novo lote
         const { error: insertErr } = await supabase.from('orders').insert({
           session_id: sessionId,
-          total_amount: pricing.totalAmount,
+          total_amount: newPricing.totalAmount,
           status: 'pending',
-          printed_count: allPrintedCount,
-          digital_count: allDigitalCount
+          printed_count: newPrintedCount,
+          digital_count: newDigitalCount
         });
 
         if (insertErr) throw insertErr;
+
+        toast.success(`Novo pedido aberto no caixa com a(s) foto(s) adicional(is)!`, {
+          id: toastId,
+          description: `${newPrintedCount} impressa(s) • ${newDigitalCount} digital(is) (R$ ${newPricing.totalAmount.toFixed(2).replace('.', ',')})`
+        });
       }
 
-      if (totalPrinted > 0) {
-        toast.success(`${totalPrinted} Impressa(s) e ${totalDigitalOnly} Digital(is) unificada(s) no caixa!`, { id: toastId });
-      } else {
-        toast.success(`${totalDigitalOnly} foto(s) digital(is) unificada(s) no caixa!`, { id: toastId });
-      }
       window.dispatchEvent(new CustomEvent('add-to-cart', { detail: { sessionId, clientName } }));
       onClose();
     } catch (error: any) {

@@ -90,10 +90,11 @@ export default function ClientProfileModal({ isOpen, onClose, client }: ClientPr
 
     async function fetchOrderDetails() {
       if (!client) return;
-      // 1. Tenta achar venda no balcão (PDV)
-      const { data: pdvOrder } = await supabase.from('orders').select('total_amount').eq('session_id', client.id).eq('status', 'paid').maybeSingle();
-      if (pdvOrder) {
-        return setOrderInfo({ total: Number(pdvOrder.total_amount), source: 'PDV' });
+      // 1. Tenta achar venda(s) no balcão (PDV)
+      const { data: pdvOrders } = await supabase.from('orders').select('total_amount').eq('session_id', client.id).eq('status', 'paid');
+      if (pdvOrders && pdvOrders.length > 0) {
+        const sumTotal = pdvOrders.reduce((acc, curr) => acc + Number(curr.total_amount || 0), 0);
+        return setOrderInfo({ total: sumTotal, source: 'PDV' });
       }
       
       // 2. Tenta achar venda no site
