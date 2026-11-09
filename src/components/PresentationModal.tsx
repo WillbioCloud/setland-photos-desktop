@@ -38,7 +38,7 @@ export default function PresentationModal({
   // Helper para recuperar ou inicializar a configuração da foto atual
   const getActiveWatermark = useCallback((photoId: string | number): PhotoWatermarkConfig => {
     return watermarksByPhoto[photoId] || {
-      enabled: true, // Padrão inicial: ativa com proteção
+      enabled: false, // Padrão inicial: desativada (cliente ativa se quiser)
       preset: 'br',
       customPos: { xPercent: 78, yPercent: 82 }
     };
@@ -126,7 +126,7 @@ export default function PresentationModal({
       const nextMap = { ...prev };
       for (const p of photos) {
         const existing = nextMap[p.id] || {
-          enabled: true,
+          enabled: false,
           preset: 'br',
           customPos: { xPercent: 78, yPercent: 82 }
         };

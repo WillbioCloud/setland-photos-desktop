@@ -31,7 +31,10 @@ export default function SelectionFormatModal({
     if (isOpen) {
       const initialFormats: Record<string | number, PhotoFormat> = {};
       selectedPhotoIds.forEach(id => {
-        initialFormats[id] = 'print_and_digital'; // Padrão: Impressa + Digital Inclusa
+        // NOTA: O Castelo Setland descontinuou a venda de fotos impressas.
+        // Todas as fotos agora entram como 'digital_only'.
+        // Para reativar a foto impressa no futuro, basta alterar o valor inicial para 'print_and_digital'.
+        initialFormats[id] = 'digital_only';
       });
       setFormats(initialFormats);
     }
@@ -164,7 +167,11 @@ export default function SelectionFormatModal({
         if (insertErr) throw insertErr;
       }
 
-      toast.success(`${totalPrinted} Impressa(s) e ${totalDigitalOnly} Digital(is) unificada(s) no caixa!`, { id: toastId });
+      if (totalPrinted > 0) {
+        toast.success(`${totalPrinted} Impressa(s) e ${totalDigitalOnly} Digital(is) unificada(s) no caixa!`, { id: toastId });
+      } else {
+        toast.success(`${totalDigitalOnly} foto(s) digital(is) unificada(s) no caixa!`, { id: toastId });
+      }
       window.dispatchEvent(new CustomEvent('add-to-cart', { detail: { sessionId, clientName } }));
       onClose();
     } catch (error: any) {
@@ -180,9 +187,9 @@ export default function SelectionFormatModal({
         {/* Modal Header */}
         <div className="flex items-center justify-between mb-8 pr-8">
           <div>
-            <h2 className="text-2xl font-bold text-brand-ink">Definir Formatos</h2>
+            <h2 className="text-2xl font-bold text-brand-ink">Confirmar Seleção Digital</h2>
             <p className="text-brand-muted mt-1">
-              Selecione quais fotos serão impressas e quais serão apenas digitais para {clientName}.
+              Confirme as fotos selecionadas para envio digital de {clientName}.
             </p>
           </div>
           <button 
@@ -197,7 +204,7 @@ export default function SelectionFormatModal({
         <div className="flex-1 overflow-y-auto pr-2 no-scrollbar mb-4">
           <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-4">
             {selectedPhotos.map(photo => {
-              const photoFormat = formats[photo.id] || 'print_and_digital';
+              const photoFormat = formats[photo.id] || 'digital_only';
               const isPrinted = photoFormat === 'print_and_digital';
 
               return (
@@ -209,7 +216,8 @@ export default function SelectionFormatModal({
                   />
 
                   {/* Badges permanentes (Visíveis sem hover) */}
-                  <div className="absolute top-2 left-2 flex flex-col gap-1.5 transition-opacity duration-300 group-hover:opacity-0 pointer-events-none">
+                  <div className="absolute top-2 left-2 flex flex-col gap-1.5 transition-opacity duration-300 pointer-events-none">
+                    {/* NOTA: Caso o Castelo volte a vender fotos impressas, descomente o bloco abaixo:
                     {isPrinted ? (
                       <div className="bg-emerald-500/95 backdrop-blur-md text-white text-xs px-2.5 py-1 rounded-md flex items-center gap-1.5 shadow-sm font-medium border border-emerald-400/20">
                         <Printer className="w-3.5 h-3.5" /> Impressa + Digital
@@ -219,31 +227,34 @@ export default function SelectionFormatModal({
                         <Smartphone className="w-3.5 h-3.5" /> Somente Digital
                       </div>
                     )}
+                    */}
+                    <div className="bg-blue-500/95 backdrop-blur-md text-white text-xs px-2.5 py-1 rounded-md flex items-center gap-1.5 shadow-sm font-medium border border-blue-400/20">
+                      <Smartphone className="w-3.5 h-3.5" /> Entrega Digital
+                    </div>
                   </div>
 
                   {/* Overlay interativo no Hover */}
                   <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex flex-col items-center justify-center gap-3 p-4">
-                    <button
-                      onClick={() => toggleFormat(photo.id, 'print_and_digital')}
-                      className={`w-full py-2.5 px-3 rounded-lg flex items-center justify-center gap-2 text-sm font-medium transition-all duration-200 ${
-                        isPrinted 
-                          ? 'bg-emerald-500 text-white shadow-lg scale-105' 
-                          : 'bg-white/20 text-white hover:bg-white/30'
-                      }`}
-                    >
-                      <Printer className="w-4 h-4" /> Impressa (+Digital)
-                    </button>
+                    {/* 
+                      OPÇÃO IMPRESSA DESATIVADA TEMPORARIAMENTE:
+                      O Castelo Setland descontinuou a venda de fotos impressas. 
+                      Para reativar a opção impressa no futuro, basta descomentar o botão abaixo:
+                      
+                      <button
+                        onClick={() => toggleFormat(photo.id, 'print_and_digital')}
+                        className={`w-full py-2.5 px-3 rounded-lg flex items-center justify-center gap-2 text-sm font-medium transition-all duration-200 ${
+                          isPrinted 
+                            ? 'bg-emerald-500 text-white shadow-lg scale-105' 
+                            : 'bg-white/20 text-white hover:bg-white/30'
+                        }`}
+                      >
+                        <Printer className="w-4 h-4" /> Impressa (+Digital)
+                      </button>
+                    */}
                     
-                    <button
-                      onClick={() => toggleFormat(photo.id, 'digital_only')}
-                      className={`w-full py-2.5 px-3 rounded-lg flex items-center justify-center gap-2 text-sm font-medium transition-all duration-200 ${
-                        !isPrinted 
-                          ? 'bg-blue-500 text-white shadow-lg scale-105' 
-                          : 'bg-white/20 text-white hover:bg-white/30'
-                      }`}
-                    >
+                    <div className="w-full py-2.5 px-3 rounded-lg flex items-center justify-center gap-2 text-sm font-medium bg-blue-500 text-white shadow-lg">
                       <Smartphone className="w-4 h-4" /> Somente Digital
-                    </button>
+                    </div>
                   </div>
                 </div>
               );
@@ -258,7 +269,10 @@ export default function SelectionFormatModal({
               Total selecionado: <span className="font-semibold text-brand-ink">{selectedPhotos.length} fotos</span>
             </span>
             <span className="text-xs">
-              {Object.values(formats).filter(f => f === 'print_and_digital').length} Impressas (+Digital) | {Object.values(formats).filter(f => f === 'digital_only').length} Apenas Digitais
+              {/* Para reativar texto com impressas no futuro:
+                  {Object.values(formats).filter(f => f === 'print_and_digital').length} Impressas (+Digital) | 
+              */}
+              {Object.values(formats).filter(f => f === 'digital_only').length} Foto(s) Digital(is)
             </span>
           </div>
           
