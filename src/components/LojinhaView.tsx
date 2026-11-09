@@ -24,6 +24,46 @@ import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { toast } from 'sonner';
 
+// Alerta sonoro WebAudio independente de arquivos .mp3 externos (dois tons claros: 880Hz -> 1174.66Hz)
+function playAlertSound() {
+  try {
+    const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+    if (!AudioContextClass) return;
+    const ctx = new AudioContextClass();
+    if (ctx.state === 'suspended') {
+      ctx.resume();
+    }
+    const now = ctx.currentTime;
+
+    // Primeiro acorde / tom: A5 (880Hz)
+    const osc1 = ctx.createOscillator();
+    const gain1 = ctx.createGain();
+    osc1.type = 'sine';
+    osc1.frequency.setValueAtTime(880, now);
+    gain1.gain.setValueAtTime(0.2, now);
+    gain1.gain.exponentialRampToValueAtTime(0.001, now + 0.35);
+    osc1.connect(gain1);
+    gain1.connect(ctx.destination);
+    osc1.start(now);
+    osc1.stop(now + 0.35);
+
+    // Segundo acorde / tom: D6 (1174.66Hz) formando acorde de campainha/notificação
+    const osc2 = ctx.createOscillator();
+    const gain2 = ctx.createGain();
+    osc2.type = 'sine';
+    osc2.frequency.setValueAtTime(1174.66, now + 0.12);
+    gain2.gain.setValueAtTime(0, now);
+    gain2.gain.setValueAtTime(0.22, now + 0.12);
+    gain2.gain.exponentialRampToValueAtTime(0.001, now + 0.6);
+    osc2.connect(gain2);
+    gain2.connect(ctx.destination);
+    osc2.start(now + 0.12);
+    osc2.stop(now + 0.6);
+  } catch (e) {
+    console.warn('[LojinhaView] Não foi possível reproduzir som de alerta:', e);
+  }
+}
+
 export default function LojinhaView() {
   const [orders, setOrders] = useState<any[]>([]);
   const [packages, setPackages] = useState<PackageDef[]>([]);
@@ -37,39 +77,57 @@ export default function LojinhaView() {
   const notifiedOrderIdsRef = useRef<Set<string>>(new Set());
   const isFirstLoadRef = useRef(true);
 
-  // Dispara a Notificação Nativa do Windows (Pop-up do Sistema + Som) e o Toast Sonner
+  // Dispara Som WebAudio, Notificação Nativa do Windows (Pop-up do Sistema) e Toast Sonner
   const notifyNewStoreOrder = useCallback((orderData: any) => {
     if (!orderData?.id) return;
 
-    // Trava de deduplicação estrita: se este pedido já foi notificado, ignora sumariamente!
-    if (notifiedOrderIdsRef.current.has(orderData.id)) {
-      return;
-    }
     notifiedOrderIdsRef.current.add(orderData.id);
     knownAwaitingIdsRef.current.add(orderData.id);
 
-    const clientName = orderData.photo_sessions?.clients?.name || orderData.photo_sessions?.client_name || 'Cliente';
-    const totalStr = Number(orderData.total_amount || 0).toFixed(2).replace('.', ',');
+    // 1. Toca o som de alerta WebAudio
+    playAlertSound();
+
+    const clientName = orderData.photo_sessions?.clients?.name || orderData.photo_sessions?.client_name || orderData.client_name || 'Cliente';
     const printedCount = orderData.printed_count || 0;
     const digitalCount = orderData.digital_count || 0;
-    const itemsDesc = `${printedCount} impressa(s) • ${digitalCount} digital(is)`;
+    const totalAmount = Number(orderData.total_amount || 0).toFixed(2).replace('.', ',');
 
-    // 1. Notificação Nativa do Windows (Toast Pop-up mesmo com o app minimizado)
+    const title = '🏰 Novo Pedido de Fotos!';
+    const body = `${clientName} • ${printedCount} Impressa(s) e ${digitalCount} Digital(is) — Total: R$ ${totalAmount}`;
+
+    // 2. Notificação Nativa do Windows (Toast Pop-up mesmo com o app minimizado)
     const api = typeof window !== 'undefined' ? (window.electronAPI || window.electron) : null;
     if (api?.showNotification) {
       void api.showNotification({
-        title: '🛍️ Novo Pedido Recebido no Caixa!',
-        body: `Cliente: ${clientName}\nTotal a Cobrar: R$ ${totalStr} (${itemsDesc})`,
+        title,
+        body,
         silent: false,
       });
     }
 
-    // 2. Alerta visual interno na interface
-    toast.info(`🛍️ Novo Pedido: ${clientName} — R$ ${totalStr}`, {
-      description: `Aguardando cobrança no balcão. ${itemsDesc}`,
+    // 3. Alerta visual interno na interface
+    toast.info(title, {
+      description: body,
       duration: 6000,
     });
   }, []);
+
+  // Botão de teste imediato da notificação nativa + som
+  const handleTestAlert = () => {
+    playAlertSound();
+    const api = typeof window !== 'undefined' ? (window.electronAPI || window.electron) : null;
+    if (api?.showNotification) {
+      void api.showNotification({
+        title: '🏰 Novo Pedido de Fotos!',
+        body: 'Cliente Teste • 1 Impressa(s) e 1 Digital(is) — Total: R$ 35,00',
+        silent: false,
+      });
+    }
+    toast.info('🏰 Novo Pedido de Fotos!', {
+      description: 'Cliente Teste • 1 Impressa(s) e 1 Digital(is) — Total: R$ 35,00',
+      duration: 5000,
+    });
+  };
 
   // Carrega pacotes ativos para o motor de precificação
   useEffect(() => {
@@ -265,7 +323,17 @@ export default function LojinhaView() {
               <Store className="w-5 h-5" />
             </div>
             <div>
-              <h1 className="text-xl font-bold text-foreground tracking-tight">Caixa da Lojinha · Recebimento de Fotos</h1>
+              <div className="flex items-center gap-3 flex-wrap">
+                <h1 className="text-xl font-bold text-foreground tracking-tight">Caixa da Lojinha · Recebimento de Fotos</h1>
+                <button
+                  type="button"
+                  onClick={handleTestAlert}
+                  className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-semibold bg-amber-500/15 hover:bg-amber-500/25 text-amber-600 dark:text-amber-400 border border-amber-500/30 transition-all cursor-pointer shadow-xs active:scale-95"
+                  title="Disparar notificação nativa do Windows e alerta sonoro"
+                >
+                  🔔 Testar Alerta
+                </button>
+              </div>
               <div className="flex items-center gap-2 mt-0.5">
                 <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
                 <span className="text-xs text-muted-foreground font-medium">Sincronizado em Tempo Real com a Fotografia</span>

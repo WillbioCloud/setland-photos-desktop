@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog, shell, Notification } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, shell, Notification, nativeImage } from 'electron';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
@@ -60,13 +60,18 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 
 let mainWindow: BrowserWindow | null = null;
 
+// Mantém referência viva das notificações para o Garbage Collector do V8 não apagar o listener de click
+const activeNotifications = new Set<Notification>();
+
 function resolveAppIconPath(): string | undefined {
   const candidates = [
+    app.isPackaged ? path.join(process.resourcesPath, 'icon.png') : '',
     app.isPackaged ? path.join(process.resourcesPath, 'favicon.ico') : '',
+    path.join(app.getAppPath(), 'public', 'icon.png'),
     path.join(app.getAppPath(), 'public', 'favicon.ico'),
-    path.join(app.getAppPath(), 'dist', 'favicon.ico'),
+    path.join(__dirname, '../public/icon.png'),
     path.join(__dirname, '../public/favicon.ico'),
-    path.join(__dirname, '../dist/favicon.ico'),
+    path.join(process.cwd(), 'public', 'icon.png'),
     path.join(process.cwd(), 'public', 'favicon.ico'),
   ].filter(Boolean);
 
@@ -78,22 +83,53 @@ function resolveAppIconPath(): string | undefined {
   return undefined;
 }
 
+function resolveNativeAppIcon(): Electron.NativeImage | undefined {
+  const iconPath = resolveAppIconPath();
+  if (!iconPath) return undefined;
+  try {
+    const img = nativeImage.createFromPath(iconPath);
+    if (!img.isEmpty()) {
+      return img;
+    }
+  } catch (err) {
+    console.warn('[Icon] Falha ao criar nativeImage:', err);
+  }
+  return undefined;
+}
+
+function focusMainWindow() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  if (mainWindow.isMinimized()) {
+    mainWindow.restore();
+  }
+  mainWindow.show();
+  // Força o Windows a trazer a janela para a frente de qualquer outro sistema aberto na Lojinha
+  mainWindow.setAlwaysOnTop(true);
+  mainWindow.focus();
+  mainWindow.flashFrame(false);
+  setTimeout(() => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.setAlwaysOnTop(false);
+    }
+  }, 300);
+}
+
 function createWindow() {
-  const appIcon = resolveAppIconPath();
+  const nativeIcon = resolveNativeAppIcon();
 
   mainWindow = new BrowserWindow({
     width: 1366,
     height: 860,
     minWidth: 1024,
     minHeight: 700,
-    title: "Setland Fotos - Terminal Quiosque",
-    icon: appIcon,
+    title: "Setland Fotos",
+    icon: nativeIcon || resolveAppIconPath(),
     backgroundColor: '#0D020C',
-    autoHideMenuBar: true, // Remove menu padrão 'File, Edit, View'
-    titleBarStyle: 'hidden', // Oculta barra cinza padrão do Windows
+    autoHideMenuBar: true,
+    titleBarStyle: 'hidden',
     titleBarOverlay: {
-      color: '#0D020C', // Fundo escuro harmonizado com o app
-      symbolColor: '#D9A45C', // Botões minimizar/fechar em Dourado Setland
+      color: '#0D020C',
+      symbolColor: '#D9A45C',
       height: 38
     },
     webPreferences: {
@@ -105,15 +141,57 @@ function createWindow() {
     }
   });
 
-  if (appIcon && process.platform === 'win32') {
-    mainWindow.setIcon(appIcon);
+  if (nativeIcon && process.platform === 'win32') {
+    mainWindow.setIcon(nativeIcon);
   }
+
+  mainWindow.on('focus', () => {
+    mainWindow?.flashFrame(false);
+  });
 
   mainWindow.webContents.on('preload-error', (_event, preloadPath, error) => {
     console.error('[Preload Error] Falha ao carregar preload (' + preloadPath + '):', error);
   });
 
-  // 2. Resolve automaticamente a porta (5173, 5174, etc)
+  mainWindow.webContents.on('before-input-event', (event, input) => {
+    if ((input.control || input.meta) && input.shift && input.key.toLowerCase() === 'n') {
+      event.preventDefault();
+      const nativeIcon = resolveNativeAppIcon();
+      const secondWin = new BrowserWindow({
+        width: 1280,
+        height: 820,
+        minWidth: 1024,
+        minHeight: 700,
+        title: "Setland Fotos (Janela Secundária de Teste)",
+        icon: nativeIcon || resolveAppIconPath(),
+        backgroundColor: '#0D020C',
+        autoHideMenuBar: true,
+        titleBarStyle: 'hidden',
+        titleBarOverlay: {
+          color: '#0D020C',
+          symbolColor: '#D9A45C',
+          height: 38
+        },
+        webPreferences: {
+          preload: fs.existsSync(path.join(__dirname, 'preload.cjs'))
+            ? path.join(__dirname, 'preload.cjs')
+            : path.join(__dirname, 'preload.js'),
+          sandbox: false,
+          webSecurity: false,
+          partition: `persist:secondary_${Date.now()}`
+        }
+      });
+      if (nativeIcon && process.platform === 'win32') {
+        secondWin.setIcon(nativeIcon);
+      }
+      if (process.env.VITE_DEV_SERVER_URL) {
+        secondWin.loadURL(process.env.VITE_DEV_SERVER_URL);
+      } else {
+        secondWin.loadFile(path.join(__dirname, '../dist/index.html'));
+      }
+    }
+  });
+
   if (process.env.VITE_DEV_SERVER_URL) {
     mainWindow.loadURL(process.env.VITE_DEV_SERVER_URL);
   } else {
@@ -301,11 +379,29 @@ async function startOnlineOrdersWorker() {
   }, 15000);
 }
 
+// 1. Isola o diretório userData quando estiver em modo Dev (!app.isPackaged)
+// Isso permite abrir o app instalado (.exe) e o `npm run dev` simultaneamente em 2 janelas independentes
+// (cada uma com seu próprio localStorage e conta logada: Quiosque em uma, Lojinha na outra!)
+if (!app.isPackaged) {
+  app.setPath('userData', path.join(app.getPath('appData'), 'setland-photos-desktop-dev'));
+}
+
+// 2. Aplica a trava de instância única por ambiente (Produção vs Dev ficam com locks separados)
+const gotTheLock = app.requestSingleInstanceLock();
+if (!gotTheLock) {
+  app.quit();
+} else {
+  app.on('second-instance', () => {
+    focusMainWindow();
+  });
+}
+
+if (process.platform === 'win32') {
+  // Nome amigável idêntico ao shortcutName para aparecer "Setland Fotos" (e não com.setland.fotos) no banner do Windows
+  app.setAppUserModelId('Setland Fotos');
+}
+
 app.whenReady().then(() => {
-  // Identificador de aplicativo para notificações do Windows (Action Center)
-  if (process.platform === 'win32') {
-    app.setAppUserModelId('com.setland.fotos');
-  }
 
   // Ajuste para o caminho exato onde as fotos brutas são descarregadas no SSD
   const localPhotosDir = path.join(app.getPath('userData'), 'Setland_Cache');
@@ -1007,25 +1103,34 @@ app.whenReady().then(() => {
     }
   });
 
-  // Notificações Nativas do Windows (Toast Pop-up com som)
+  // Notificações Nativas do Windows (Toast Pop-up com logo, som e foco na janela ao clicar)
   ipcMain.handle('notification:show', async (_event, payload: { title: string; body: string; silent?: boolean }) => {
     try {
+      // Faz o ícone piscar em laranja na barra de tarefas se a janela não estiver focada
+      if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.isFocused()) {
+        mainWindow.flashFrame(true);
+      }
+
       if (Notification.isSupported()) {
-        const iconPath = resolveAppIconPath();
+        const nativeIcon = resolveNativeAppIcon();
 
         const notification = new Notification({
           title: payload.title || 'Setland Fotos',
           body: payload.body || '',
-          icon: iconPath,
+          icon: nativeIcon,
           silent: payload.silent ?? false,
+          timeoutType: 'default',
         });
 
+        activeNotifications.add(notification);
+
         notification.on('click', () => {
-          if (mainWindow && !mainWindow.isDestroyed()) {
-            if (mainWindow.isMinimized()) mainWindow.restore();
-            mainWindow.show();
-            mainWindow.focus();
-          }
+          focusMainWindow();
+          activeNotifications.delete(notification);
+        });
+
+        notification.on('close', () => {
+          activeNotifications.delete(notification);
         });
 
         notification.show();
