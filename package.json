@@ -2,6 +2,8 @@
   "name": "setland-photos-desktop",
   "private": true,
   "version": "1.0.4",
+  "description": "Terminal Quiosque e PDV Setland Fotos",
+  "author": "Setland",
   "type": "module",
   "main": "dist-electron/main.js",
   "scripts": {
