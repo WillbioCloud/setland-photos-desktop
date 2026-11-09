@@ -52,124 +52,121 @@ export default function SelectionFormatModal({
   };
 
   const handleSendToCart = async () => {
-    let totalPrinted = 0;
-    let totalDigitalOnly = 0;
+    // Ignora fotos que já foram pagas/sincronizadas anteriormente para NUNCA cobrar duas vezes
+    const validSelectedPhotos = selectedPhotos.filter(
+      (p: any) => p.status !== 'synced' && !p.isPurchased && !p.is_purchased
+    );
 
-    Object.values(formats).forEach(format => {
-      if (format === 'print_and_digital') totalPrinted++;
-      if (format === 'digital_only') totalDigitalOnly++;
-    });
-
-    if (totalPrinted === 0 && totalDigitalOnly === 0) {
-      toast.error("Nenhum formato selecionado para as fotos.");
+    if (validSelectedPhotos.length === 0) {
+      toast.error("As fotos selecionadas já foram compradas anteriormente.");
       return;
     }
 
     const toastId = toast.loading("Enviando para o Frente de Caixa...");
 
     try {
-      // 1. Atualiza de forma cumulativa APENAS as novas fotos selecionadas no modal
-      const printedIds = selectedPhotos
-        .filter(p => (formats[p.id] || 'print_and_digital') === 'print_and_digital')
-        .map(p => p.id);
-      const digitalOnlyIds = selectedPhotos
-        .filter(p => formats[p.id] === 'digital_only')
-        .map(p => p.id);
-
-      if (printedIds.length > 0) {
-        const { error: printedErr } = await supabase.from('session_photos')
-          .update({ status: 'selected', is_printed: true, is_purchased: true })
-          .in('id', printedIds);
-        
-        if (printedErr) {
-          console.error("Erro ao atualizar fotos impressas:", printedErr);
-          throw new Error("Falha ao registrar fotos impressas no banco.");
-        }
-      }
-
-      if (digitalOnlyIds.length > 0) {
-        const { error: digitalErr } = await supabase.from('session_photos')
-          .update({ status: 'selected', is_printed: false, is_purchased: true })
-          .in('id', digitalOnlyIds);
-
-        if (digitalErr) {
-          console.error("Erro ao atualizar fotos digitais:", digitalErr);
-          throw new Error("Falha ao registrar fotos digitais no banco.");
-        }
-      }
-
-      // 2. Busca pacotes ativos para a precificação
       const { data: pkgs } = await supabase.from('packages').select('*').eq('active', true);
+      const activePackages = (pkgs || []) as PackageDef[];
 
-      // 3. Verifica se existe um pedido em aberto (ainda NÃO pago) para esta sessão
-      const { data: openOrder } = await supabase.from('orders')
+      // 1. Verifica se existe um pedido ABERTO (ainda NÃO pago: 'pending' ou 'awaiting_store') para esta sessão
+      const { data: openOrders } = await supabase
+        .from('orders')
         .select('*')
         .eq('session_id', sessionId)
         .in('status', ['pending', 'awaiting_store'])
-        .order('created_at', { ascending: false })
-        .limit(1)
-        .maybeSingle();
+        .order('created_at', { ascending: false });
 
-      if (openOrder) {
-        // CASO 1: O cliente já tem um pedido aberto que AINDA NÃO FOI PAGO (está no PDV ou Lojinha)
-        // O cliente pediu para adicionar mais fotos antes de fechar a conta.
-        // Aqui sim unificamos no mesmo pedido todas as fotos 'selected' (ainda não pagas) da sessão.
-        const { data: pendingPhotos, error: fetchPendingErr } = await supabase.from('session_photos')
-          .select('id, is_printed')
+      const existingOpenOrder = openOrders && openOrders.length > 0 ? openOrders[0] : null;
+
+      // IMPORTANTE: Se NÃO existe nenhum pedido aberto (ex: pedidos anteriores já foram 'paid' ou 'canceled'),
+      // limpamos qualquer foto que tenha ficado com status 'selected' órfã de testes anteriores (e que não está na seleção atual)
+      if (!existingOpenOrder) {
+        await supabase
+          .from('session_photos')
+          .update({ status: 'pending', is_printed: false, is_purchased: false })
           .eq('session_id', sessionId)
           .eq('status', 'selected');
-
-        if (fetchPendingErr) throw fetchPendingErr;
-
-        const mergedPrintedCount = (pendingPhotos || []).filter(p => p.is_printed === true).length;
-        const mergedDigitalCount = (pendingPhotos || []).filter(p => !p.is_printed).length;
-        const mergedPricing = calculatePricing(mergedPrintedCount, mergedDigitalCount, (pkgs || []) as PackageDef[]);
-
-        const { error: updateErr } = await supabase.from('orders').update({
-          total_amount: mergedPricing.totalAmount,
-          printed_count: mergedPrintedCount,
-          digital_count: mergedDigitalCount
-        }).eq('id', openOrder.id);
-
-        if (updateErr) throw updateErr;
-
-        toast.success(`Pedido unificado no caixa com as novas fotos!`, {
-          id: toastId,
-          description: `Total atualizado: ${mergedPrintedCount} impressa(s) • ${mergedDigitalCount} digital(is)`
-        });
-      } else {
-        // CASO 2: O pedido anterior já foi PAGO (status 'paid') ou é a primeira compra
-        // As fotos anteriores já foram finalizadas e pagas ('synced').
-        // As fotos selecionadas agora ('selected') representam uma NOVA compra adicional/avulsa.
-        // Cobramos APENAS pelas novas fotos selecionadas agora!
-        const { data: currentBatchPhotos, error: fetchBatchErr } = await supabase.from('session_photos')
-          .select('id, is_printed')
-          .eq('session_id', sessionId)
-          .eq('status', 'selected');
-
-        if (fetchBatchErr) throw fetchBatchErr;
-
-        const newPrintedCount = (currentBatchPhotos || []).filter(p => p.is_printed === true).length;
-        const newDigitalCount = (currentBatchPhotos || []).filter(p => !p.is_printed).length;
-        const newPricing = calculatePricing(newPrintedCount, newDigitalCount, (pkgs || []) as PackageDef[]);
-
-        // Cria um NOVO pedido separado no PDV contendo APENAS a nova foto / novo lote
-        const { error: insertErr } = await supabase.from('orders').insert({
-          session_id: sessionId,
-          total_amount: newPricing.totalAmount,
-          status: 'pending',
-          printed_count: newPrintedCount,
-          digital_count: newDigitalCount
-        });
-
-        if (insertErr) throw insertErr;
-
-        toast.success(`Novo pedido aberto no caixa com a(s) foto(s) adicional(is)!`, {
-          id: toastId,
-          description: `${newPrintedCount} impressa(s) • ${newDigitalCount} digital(is) (R$ ${newPricing.totalAmount.toFixed(2).replace('.', ',')})`
-        });
       }
 
+      // 2. Separa as fotos da seleção atual entre Impressas e Digitais
+      const printedIds = validSelectedPhotos
+        .filter((p) => (formats[p.id] || 'print_and_digital') === 'print_and_digital')
+        .map((p) => p.id);
+
+      const digitalOnlyIds = validSelectedPhotos
+        .filter((p) => formats[p.id] === 'digital_only')
+        .map((p) => p.id);
+
+      // ATENÇÃO: is_purchased DEVE ser FALSE aqui! Só vira TRUE quando pagar no PDV!
+      if (printedIds.length > 0) {
+        const { error: printedErr } = await supabase
+          .from('session_photos')
+          .update({ status: 'selected', is_printed: true, is_purchased: false })
+          .in('id', printedIds);
+        if (printedErr) throw new Error("Falha ao registrar seleção das fotos impressas.");
+      }
+
+      if (digitalOnlyIds.length > 0) {
+        const { error: digitalErr } = await supabase
+          .from('session_photos')
+          .update({ status: 'selected', is_printed: false, is_purchased: false })
+          .in('id', digitalOnlyIds);
+        if (digitalErr) throw new Error("Falha ao registrar seleção das fotos digitais.");
+      }
+
+      // 3. Consulta APENAS as fotos que estão no carrinho atual (`status = 'selected'`)
+      // Fotos de compras passadas que já foram pagas estão como `status = 'synced'` e NÃO entram nesta conta!
+      const { data: currentCartPhotos, error: cartErr } = await supabase
+        .from('session_photos')
+        .select('id, is_printed')
+        .eq('session_id', sessionId)
+        .eq('status', 'selected');
+
+      if (cartErr) throw cartErr;
+
+      const cartPrintedCount = (currentCartPhotos || []).filter((p: any) => p.is_printed === true).length;
+      const cartDigitalCount = (currentCartPhotos || []).length - cartPrintedCount;
+
+      const pricing = calculatePricing(cartPrintedCount, cartDigitalCount, activePackages);
+
+      // 4. Se havia um pedido ABERTO (ainda não pago), atualiza ele somando as fotos do carrinho.
+      // Se o pedido anterior já estava PAGO ('paid'), existingOpenOrder é null, então cria um NOVO pedido só com a foto nova!
+      if (existingOpenOrder) {
+        const { error: updateOrderErr } = await supabase
+          .from('orders')
+          .update({
+            total_amount: pricing.totalAmount,
+            printed_count: cartPrintedCount,
+            digital_count: cartDigitalCount,
+          })
+          .eq('id', existingOpenOrder.id);
+
+        if (updateOrderErr) throw updateOrderErr;
+
+        // Se havia pedidos duplicados pendentes antigos na mesma sessão, remove as duplicatas
+        if (openOrders && openOrders.length > 1) {
+          const duplicateIds = openOrders.slice(1).map((o: any) => o.id);
+          await supabase.from('orders').delete().in('id', duplicateIds);
+        }
+
+        toast.success(`Pedido atualizado no caixa: ${cartPrintedCount} Impressa(s) e ${cartDigitalCount} Digital(is)!`, { id: toastId });
+      } else {
+        const { error: insertOrderErr } = await supabase
+          .from('orders')
+          .insert({
+            session_id: sessionId,
+            total_amount: pricing.totalAmount,
+            status: 'pending',
+            printed_count: cartPrintedCount,
+            digital_count: cartDigitalCount,
+          });
+
+        if (insertOrderErr) throw insertOrderErr;
+
+        toast.success(`Novo pedido enviado ao caixa: ${cartPrintedCount} Impressa(s) e ${cartDigitalCount} Digital(is)!`, { id: toastId });
+      }
+
+      window.dispatchEvent(new CustomEvent('session-updated', { detail: { sessionId } }));
       window.dispatchEvent(new CustomEvent('add-to-cart', { detail: { sessionId, clientName } }));
       onClose();
     } catch (error: any) {

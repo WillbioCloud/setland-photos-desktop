@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { X, Cloud, CloudUpload, Camera, CheckCircle2, User, Phone, DollarSign, Printer, Trash2, Globe, Monitor, Loader2, Plus, Store, Clock, Check, ImageOff } from 'lucide-react';
+import { X, Cloud, CloudUpload, Camera, CheckCircle2, User, Phone, DollarSign, Printer, Trash2, Globe, Monitor, Loader2, Plus, Store, Clock, Check, ImageOff, ShoppingCart } from 'lucide-react';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
@@ -12,6 +12,7 @@ import {
   fetchAllSessionPhotos,
   getPhotoExpiryInfo,
   isPhotoPurchased,
+  isPhotoInCart,
   mergeSessionPhotos,
   shapeSessionPhoto,
   type SessionPhoto,
@@ -200,9 +201,31 @@ export default function ClientProfileModal({ isOpen, onClose, client }: ClientPr
   };
 
   const togglePhoto = (id: string | number) => {
+    const photo = sessionPhotos.find(p => String(p.id) === String(id));
+    if (photo && isPhotoPurchased(photo)) {
+      toast.info("Esta foto já foi comprada e entregue anteriormente.");
+      return;
+    }
     setSelectedPhotos(prev => 
       prev.includes(id) ? prev.filter(pId => pId !== id) : [...prev, id]
     );
+  };
+
+  const handleRemoveFromCart = async (e: React.MouseEvent, photoId: string | number) => {
+    e.stopPropagation();
+    try {
+      await supabase
+        .from('session_photos')
+        .update({ status: 'pending', is_printed: false, is_purchased: false })
+        .eq('id', photoId);
+
+      setSelectedPhotos(prev => prev.filter(id => String(id) !== String(photoId)));
+      toast.success("Foto removida do carrinho.");
+      void syncSessionPhotos();
+      window.dispatchEvent(new CustomEvent('session-updated', { detail: { sessionId } }));
+    } catch (err: any) {
+      toast.error("Erro ao remover foto do carrinho.");
+    }
   };
 
   const handlePrint = async () => {
@@ -394,6 +417,22 @@ export default function ClientProfileModal({ isOpen, onClose, client }: ClientPr
                         </div>
                       )}
 
+                      {/* Selo âmbar: foto no carrinho aguardando pagamento */}
+                      {!isPhotoPurchased(photo) && isPhotoInCart(photo) && (
+                        <div className="absolute top-2 left-2 bg-amber-500/95 text-slate-950 rounded-md px-2 py-0.5 text-[10px] font-bold shadow flex items-center gap-1.5 z-10">
+                          <ShoppingCart className="h-3 w-3" />
+                          <span>No Carrinho</span>
+                          <button
+                            type="button"
+                            onClick={(e) => handleRemoveFromCart(e, photo.id)}
+                            className="ml-1 hover:bg-black/20 rounded p-0.5 transition-colors cursor-pointer"
+                            title="Remover do carrinho"
+                          >
+                            <X className="h-2.5 w-2.5" />
+                          </button>
+                        </div>
+                      )}
+
                       {/* Contagem regressiva para a exclusão física da foto */}
                       <PhotoExpiryBadge photo={photo} fallbackDate={sessionReferenceDate} />
 
@@ -444,6 +483,22 @@ export default function ClientProfileModal({ isOpen, onClose, client }: ClientPr
                         <div className="absolute top-2 left-2 bg-emerald-600/90 text-white rounded-md px-2 py-0.5 text-[10px] font-bold shadow flex items-center gap-1 pointer-events-none">
                           <Check className="h-3 w-3" />
                           Comprada
+                        </div>
+                      )}
+
+                      {/* Selo âmbar: foto no carrinho aguardando pagamento */}
+                      {!isPhotoPurchased(photo) && isPhotoInCart(photo) && (
+                        <div className="absolute top-2 left-2 bg-amber-500/95 text-slate-950 rounded-md px-2 py-0.5 text-[10px] font-bold shadow flex items-center gap-1.5 z-10">
+                          <ShoppingCart className="h-3 w-3" />
+                          <span>No Carrinho</span>
+                          <button
+                            type="button"
+                            onClick={(e) => handleRemoveFromCart(e, photo.id)}
+                            className="ml-1 hover:bg-black/20 rounded p-0.5 transition-colors cursor-pointer"
+                            title="Remover do carrinho"
+                          >
+                            <X className="h-2.5 w-2.5" />
+                          </button>
                         </div>
                       )}
 

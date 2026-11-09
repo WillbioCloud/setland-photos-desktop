@@ -60,14 +60,34 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 
 let mainWindow: BrowserWindow | null = null;
 
+function resolveAppIconPath(): string | undefined {
+  const candidates = [
+    app.isPackaged ? path.join(process.resourcesPath, 'favicon.ico') : '',
+    path.join(app.getAppPath(), 'public', 'favicon.ico'),
+    path.join(app.getAppPath(), 'dist', 'favicon.ico'),
+    path.join(__dirname, '../public/favicon.ico'),
+    path.join(__dirname, '../dist/favicon.ico'),
+    path.join(process.cwd(), 'public', 'favicon.ico'),
+  ].filter(Boolean);
+
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) {
+      return candidate;
+    }
+  }
+  return undefined;
+}
+
 function createWindow() {
+  const appIcon = resolveAppIconPath();
+
   mainWindow = new BrowserWindow({
     width: 1366,
     height: 860,
     minWidth: 1024,
     minHeight: 700,
     title: "Setland Fotos - Terminal Quiosque",
-    icon: path.join(__dirname, '../public/favicon.ico'),
+    icon: appIcon,
     backgroundColor: '#0D020C',
     autoHideMenuBar: true, // Remove menu padrão 'File, Edit, View'
     titleBarStyle: 'hidden', // Oculta barra cinza padrão do Windows
@@ -84,6 +104,10 @@ function createWindow() {
       webSecurity: false
     }
   });
+
+  if (appIcon && process.platform === 'win32') {
+    mainWindow.setIcon(appIcon);
+  }
 
   mainWindow.webContents.on('preload-error', (_event, preloadPath, error) => {
     console.error('[Preload Error] Falha ao carregar preload (' + preloadPath + '):', error);
@@ -986,14 +1010,12 @@ app.whenReady().then(() => {
   ipcMain.handle('notification:show', async (_event, payload: { title: string; body: string; silent?: boolean }) => {
     try {
       if (Notification.isSupported()) {
-        const iconPath = app.isPackaged
-          ? path.join(process.resourcesPath, 'favicon.ico')
-          : path.join(__dirname, '../public/favicon.ico');
+        const iconPath = resolveAppIconPath();
 
         const notification = new Notification({
           title: payload.title || 'Setland Fotos',
           body: payload.body || '',
-          icon: fs.existsSync(iconPath) ? iconPath : undefined,
+          icon: iconPath,
           silent: payload.silent ?? false,
         });
 

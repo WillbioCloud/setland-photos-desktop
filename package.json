@@ -76,6 +76,10 @@
     ],
     "extraResources": [
       {
+        "from": "public/favicon.ico",
+        "to": "favicon.ico"
+      },
+      {
         "from": "credentials.json",
         "to": "credentials.json"
       },

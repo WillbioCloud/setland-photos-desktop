@@ -287,13 +287,21 @@ export async function fetchAllSessionPhotos(sessionIds: (string | number)[]): Pr
 }
 
 /**
- * Regra de negócio: a foto é considerada adquirida quando possui a flag `is_purchased`
- * ou quando já está marcada/selecionada para venda na vitrine (`selected`) ou entregue (`synced`).
+ * Regra de negócio: a foto SÓ é considerada efetivamente COMPRADA quando o pagamento
+ * já foi confirmado (`status === 'synced'` ou `is_purchased === true`).
+ * Fotos com `status === 'selected'` estão apenas NO CARRINHO aguardando pagamento!
  */
 export function isPhotoPurchased(photo: any): boolean {
   if (!photo) return false;
-  if (photo.isPurchased === true || photo.is_purchased === true) return true;
-  return photo.status === 'selected' || photo.status === 'synced';
+  if (photo.status === 'synced') return true;
+  if (photo.status === 'selected') return false;
+  return photo.isPurchased === true || photo.is_purchased === true;
+}
+
+/** Verifica se a foto está atualmente separada no carrinho do PDV aguardando pagamento. */
+export function isPhotoInCart(photo: any): boolean {
+  if (!photo) return false;
+  return photo.status === 'selected';
 }
 
 /**

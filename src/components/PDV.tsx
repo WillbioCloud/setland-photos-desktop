@@ -223,7 +223,7 @@ export default function PDV() {
       const cleanupListener = window.electronAPI.onDrivePhotoProgress ? window.electronAPI.onDrivePhotoProgress((data: any) => {
         if (data.sessionId === currentSessionId) {
           // Atualiza status da foto no banco sem bloquear o callback IPC
-          supabase.from('session_photos').update({ status: 'synced', is_printed: false }).eq('id', data.photoId)
+          supabase.from('session_photos').update({ status: 'synced', is_purchased: true, is_printed: false }).eq('id', data.photoId)
             .then(() => { })
             .catch((err: any) => console.warn('Erro ao atualizar status da foto:', err));
 
@@ -472,6 +472,14 @@ export default function PDV() {
     }
 
     await supabase.from('photo_sessions').update({ status: 'Convertido/Pago' }).eq('id', order.session_id);
+
+    // Marca as fotos 'selected' daquela compra como compradas imediatamente ao confirmar pagamento
+    await supabase.from('session_photos')
+      .update({ is_purchased: true })
+      .eq('session_id', order.session_id)
+      .eq('status', 'selected');
+    window.dispatchEvent(new CustomEvent('session-updated', { detail: { sessionId: order.session_id } }));
+
     toast.success("Pagamento confirmado! O upload para o Drive iniciará em background.", { id: toastId, duration: 3000 });
 
     const currentClientName = order.photo_sessions?.clients?.name || order.photo_sessions?.client_name || 'Cliente';
@@ -511,9 +519,21 @@ export default function PDV() {
   };
 
   const handleDeletePending = async (orderId: string) => {
+    const targetOrder = pendingOrders.find((o) => o.id === orderId) || activeOrder;
     await supabase.from('orders').delete().eq('id', orderId);
+
+    if (targetOrder?.session_id) {
+      await supabase
+        .from('session_photos')
+        .update({ status: 'pending', is_printed: false, is_purchased: false })
+        .eq('session_id', targetOrder.session_id)
+        .eq('status', 'selected');
+      window.dispatchEvent(new CustomEvent('session-updated', { detail: { sessionId: targetOrder.session_id } }));
+    }
+
     if (activeOrder?.id === orderId) setActiveOrder(null);
     loadData();
+    toast.info("Pedido cancelado e fotos liberadas da seleção.");
   };
 
   return (
