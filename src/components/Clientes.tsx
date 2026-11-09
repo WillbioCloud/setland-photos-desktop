@@ -295,7 +295,13 @@ export default function Clientes() {
     last7Days.setDate(last7Days.getDate() - 7);
 
     return clientsList.filter(client => {
-      const matchesSearch = client.name.toLowerCase().includes(searchTerm.toLowerCase());
+      const term = searchTerm.toLowerCase().trim();
+      const cleanSearchDigits = term.replace(/\D/g, '');
+      const clientPhoneDigits = String(client.phone || '').replace(/\D/g, '');
+      const matchesSearch = 
+        client.name.toLowerCase().includes(term) ||
+        (cleanSearchDigits.length > 0 && clientPhoneDigits.includes(cleanSearchDigits)) ||
+        (Boolean(client.phone) && client.phone.toLowerCase().includes(term));
       const matchesFilter = 
         activeFilter === 'Todos' ? true :
         activeFilter === 'Pendentes' ? client.status === 'Pendente' :
@@ -421,11 +427,11 @@ export default function Clientes() {
       return;
     }
 
-    const shopUrl = getOnlineShopUrl(client.id);
+    const shopUrl = getOnlineShopUrl(client.phone);
     const toastId = toast.loading('Preparando o link da vitrine online...');
     const result = await dispatchWhatsAppMessage({
       phone: client.phone,
-      message: buildOnlineStoreMessage(client.name, shopUrl, client.cpf),
+      message: buildOnlineStoreMessage(client.name, shopUrl, client.phone),
       clientName: client.name,
       clientCpf: client.cpf,
       source: 'desktop_link_compra_online',

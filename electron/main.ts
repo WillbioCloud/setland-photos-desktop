@@ -180,7 +180,11 @@ async function startOnlineOrdersWorker() {
       }
 
       // 5. Cria a pasta no Google Drive via OAuth2
-      const folderId = await createClientFolder(order.client_name, order.client_cpf, settings.google_drive_folder_id);
+      const folderId = await ensureClientFolder(
+        order.client_name, 
+        order.client_phone || order.client_cpf, 
+        settings.google_drive_folder_id
+      );
       
       if (photos.length > 0) {
         await supabase.from('session_photos').update({ status: 'selected' }).in('id', order.selected_photo_ids);
@@ -311,23 +315,43 @@ app.whenReady().then(() => {
 
     let clientId = null;
     try {
+      const trimmedPhone = (clientPhone || '').trim();
+      const hasPhone = trimmedPhone.length > 0;
+      const hasCpf = Boolean(clientCpf && clientCpf.trim() !== '');
+
+      let existingClient: { id: string } | null = null;
+      if (hasPhone) {
+        const { data: byPhone } = await supabase
+          .from('clients')
+          .select('id')
+          .eq('phone', trimmedPhone)
+          .maybeSingle();
+        existingClient = byPhone;
+      }
+
+      if (!existingClient && hasCpf) {
+        const { data: byCpf } = await supabase
+          .from('clients')
+          .select('id')
+          .eq('cpf', clientCpf.trim())
+          .maybeSingle();
+        existingClient = byCpf;
+      }
+
       // Gera um CPF único automático se o campo estiver vazio
-      const safeCpf = clientCpf && clientCpf.trim() !== ''
+      const safeCpf = hasCpf
         ? clientCpf.trim()
         : `AUTO_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
-      const { data: existingClient } = await supabase
-        .from('clients')
-        .select('id')
-        .eq('cpf', safeCpf)
-        .maybeSingle();
-
       if (existingClient) {
         clientId = existingClient.id;
-        // Atualiza os dados do cliente existente com as novas informações da ingestão
+        const updatePayload: Record<string, any> = { name: clientName };
+        if (hasPhone) updatePayload.phone = trimmedPhone;
+        if (hasCpf) updatePayload.cpf = clientCpf.trim();
+
         const { error: updateErr } = await supabase
           .from('clients')
-          .update({ name: clientName, phone: clientPhone })
+          .update(updatePayload)
           .eq('id', clientId);
           
         if (updateErr) console.error('Erro ao atualizar cliente existente:', updateErr);
@@ -337,7 +361,7 @@ app.whenReady().then(() => {
           .insert({
             name: clientName,
             cpf: safeCpf,
-            phone: clientPhone
+            phone: trimmedPhone || null
           })
           .select('id')
           .single();
@@ -483,7 +507,7 @@ app.whenReady().then(() => {
   });
 
   ipcMain.handle('drive:uploadPurchased', async (event, payload) => {
-    const { clientName, clientCpf, photos, parentFolderId, sessionId, existingFolderId } = payload;
+    const { clientName, clientCpf, clientPhone, photos, parentFolderId, sessionId, existingFolderId } = payload;
 
     try {
       let targetFolderId = existingFolderId;
@@ -496,7 +520,8 @@ app.whenReady().then(() => {
         }
       }
 
-      const folderId = await ensureClientFolder(clientName, clientCpf, parentFolderId, targetFolderId);
+      const clientIdentifier = clientPhone || clientCpf;
+      const folderId = await ensureClientFolder(clientName, clientIdentifier, parentFolderId, targetFolderId);
 
       let uploadedCount = 0;
       for (const photo of photos) {

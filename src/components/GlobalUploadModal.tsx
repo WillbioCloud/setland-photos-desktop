@@ -18,6 +18,14 @@ interface GlobalUploadModalProps {
   onSessionCreated?: (newSession: any) => void;
 }
 
+function formatPhoneMask(v: string): string {
+  const digits = v.replace(/\D/g, '').slice(0, 11);
+  if (digits.length <= 2) return digits;
+  if (digits.length <= 6) return `(${digits.slice(0, 2)}) ${digits.slice(2)}`;
+  if (digits.length <= 10) return `(${digits.slice(0, 2)}) ${digits.slice(2, 6)}-${digits.slice(6)}`;
+  return `(${digits.slice(0, 2)}) ${digits.slice(2, 7)}-${digits.slice(7, 11)}`;
+}
+
 export default function GlobalUploadModal({ isOpen, onClose, onSessionCreated }: GlobalUploadModalProps) {
   const [clientName, setClientName] = useState('');
   const [clientCpf, setClientCpf] = useState('');
@@ -86,6 +94,11 @@ export default function GlobalUploadModal({ isOpen, onClose, onSessionCreated }:
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    const cleanPhone = clientPhone.replace(/\D/g, '');
+    if (cleanPhone.length < 10) {
+      toast.error("Informe um Telefone / WhatsApp válido com DDD.");
+      return;
+    }
     if (!photographer) {
       toast.error("Selecione o fotógrafo antes de continuar.");
       return;
@@ -183,7 +196,7 @@ export default function GlobalUploadModal({ isOpen, onClose, onSessionCreated }:
             <>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-5 mt-4">
                 <div className="space-y-1.5">
-                  <label className="text-sm font-medium text-brand-ink ml-1 block">Nome Completo</label>
+                  <label className="text-sm font-medium text-brand-ink ml-1 block">Nome Completo *</label>
                   <Input 
                     type="text" 
                     value={clientName}
@@ -195,9 +208,22 @@ export default function GlobalUploadModal({ isOpen, onClose, onSessionCreated }:
                     className="h-11 rounded-xl bg-background border-border"
                   />
                 </div>
+
+                <div className="space-y-1.5">
+                  <label className="text-sm font-medium text-brand-ink ml-1 block">Telefone / WhatsApp *</label>
+                  <Input 
+                    type="text" 
+                    value={clientPhone}
+                    onChange={(e) => setClientPhone(formatPhoneMask(e.target.value))}
+                    placeholder="(00) 00000-0000"
+                    required
+                    disabled={isUploading}
+                    className="h-11 rounded-xl bg-background border-border font-mono"
+                  />
+                </div>
                 
                 <div className="space-y-1.5">
-                  <label className="text-sm font-medium text-brand-ink ml-1 block">CPF</label>
+                  <label className="text-sm font-medium text-brand-ink ml-1 block">CPF (Opcional)</label>
                   <Input 
                     type="text" 
                     value={clientCpf}
@@ -210,19 +236,7 @@ export default function GlobalUploadModal({ isOpen, onClose, onSessionCreated }:
                 </div>
 
                 <div className="space-y-1.5">
-                  <label className="text-sm font-medium text-brand-ink ml-1 block">Telefone / WhatsApp</label>
-                  <Input 
-                    type="text" 
-                    value={clientPhone}
-                    onChange={(e) => setClientPhone(e.target.value)}
-                    placeholder="(00) 00000-0000"
-                    disabled={isUploading}
-                    className="h-11 rounded-xl bg-background border-border font-mono"
-                  />
-                </div>
-
-                <div className="space-y-1.5">
-                  <label className="text-sm font-medium text-brand-ink ml-1 block">Fotógrafo</label>
+                  <label className="text-sm font-medium text-brand-ink ml-1 block">Fotógrafo *</label>
                   <Select value={photographer} onValueChange={setPhotographer} disabled={isUploading}>
                     <SelectTrigger className="h-11 rounded-xl bg-background border-border text-foreground">
                       <SelectValue placeholder="Selecione o fotógrafo" />

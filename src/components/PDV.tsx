@@ -287,7 +287,8 @@ export default function PDV() {
         const uploadRes = await window.electronAPI.uploadToDrive({
           sessionId: currentSessionId,
           clientName: currentClientName,
-          clientCpf: currentClientCpf,
+          clientPhone: currentClientPhone,
+          clientCpf: currentClientPhone || currentClientCpf,
           photos: photosToUpload,
           parentFolderId: settings.google_drive_folder_id,
           existingFolderId: order.photo_sessions?.drive_folder_id || null

@@ -43,13 +43,14 @@ export function sanitizeDriveFolderId(rawIdOrUrl: string): string {
 
 export async function ensureClientFolder(
   clientName: string, 
-  cpf: string, 
+  phoneOrCpf: string, 
   rawParentFolderId: string, 
   existingFolderId?: string | null
 ): Promise<string> {
   const drive = getDriveClient();
   const parentFolderId = sanitizeDriveFolderId(rawParentFolderId);
-  const folderName = `${clientName} - ${cpf || 'S/Cpf'}`;
+  const cleanIdentifier = (phoneOrCpf || '').trim() || 'S-Telefone';
+  const folderName = `${clientName} - ${cleanIdentifier}`;
 
   // 1. Se existingFolderId for informado, valida se a pasta ainda existe no Google Drive
   if (existingFolderId) {
@@ -107,8 +108,8 @@ export async function ensureClientFolder(
   return response.data.id;
 }
 
-export async function createClientFolder(clientName: string, cpf: string, parentFolderId: string): Promise<string> {
-  return ensureClientFolder(clientName, cpf, parentFolderId);
+export async function createClientFolder(clientName: string, phoneOrCpf: string, parentFolderId: string): Promise<string> {
+  return ensureClientFolder(clientName, phoneOrCpf, parentFolderId);
 }
 
 export async function uploadPhoto(filePath: string, folderId: string, fileName: string): Promise<string> {

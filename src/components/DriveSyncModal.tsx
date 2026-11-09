@@ -51,11 +51,15 @@ export default function DriveSyncModal({ isOpen, onClose, client }: DriveSyncMod
         watermark_preset: p.watermarkPreset ?? p.watermark_preset,
       }));
 
+      const clientPhone = client.phone || client.client_phone || '';
+      const clientCpf = client.cpf || client.client_cpf || '';
+
       // @ts-ignore
       const uploadRes = await window.electronAPI.uploadToDrive({
         sessionId: client.id,
         clientName: client.name || 'Cliente',
-        clientCpf: client.cpf || '', 
+        clientPhone,
+        clientCpf: clientPhone || clientCpf, 
         photos: photosToUpload,
         parentFolderId: settings.google_drive_folder_id,
         existingFolderId: client.driveFolderId || client.drive_folder_id || null

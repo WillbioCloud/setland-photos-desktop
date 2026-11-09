@@ -47,9 +47,13 @@ export function buildWhatsAppDeepLink(phone: string | null | undefined, message:
   return `https://wa.me/${normalized}?text=${encodeURIComponent(message)}`;
 }
 
-/** Link da vitrine online vinculado à sessão do cliente (compra por PIX/Cartão). */
-export function getOnlineShopUrl(_sessionId?: string): string {
-  // Aponta para o portal em produção na Vercel
+/** Link da vitrine online vinculado ao telefone do cliente (compra por PIX/Cartão). */
+export function getOnlineShopUrl(phone?: string | null): string {
+  const digits = String(phone || '').replace(/\D/g, '');
+  const cleanPhone = digits.startsWith('55') && digits.length > 11 ? digits.slice(2) : digits;
+  if (cleanPhone.length >= 10) {
+    return `https://setland-fotos.vercel.app/?telefone=${cleanPhone}`;
+  }
   return 'https://setland-fotos.vercel.app';
 }
 
@@ -75,22 +79,21 @@ export function buildDriveDownloadMessage(clientName: string | undefined, driveL
 export function buildOnlineStoreMessage(
   clientName: string,
   shopUrl: string,
-  clientCpf?: string
+  clientPhone?: string
 ): string {
   const firstName = (clientName || 'Visitante').trim().split(' ')[0];
-  const rawCpf = (clientCpf || '').trim();
-  const isRealCpf = rawCpf && !rawCpf.startsWith('AUTO_');
+  const rawPhone = (clientPhone || '').trim();
 
-  const cpfInstruction = isRealCpf
-    ? `🔑 *Para acessar suas fotos:* Digite seu CPF cadastrado: *${rawCpf}*`
-    : `🔑 *Para acessar suas fotos:* Digite o seu CPF cadastrado no momento da visita.`;
+  const phoneInstruction = rawPhone
+    ? `📱 *Para acessar suas fotos:* Digite seu WhatsApp cadastrado: *${rawPhone}*`
+    : `📱 *Para acessar suas fotos:* Digite o seu número de WhatsApp cadastrado no momento da visita.`;
 
   return (
-    `🏰 Olá, *${firstName}*! Você saiu do Castelo Setland sem ver suas fotos?\n\n` +
-    `Não se preocupe! As lembranças da sua aventura estão guardadas com segurança em nosso reino. 📸✨\n\n` +
+    `Olá, *${firstName}*! Você saiu do Castelo Setland sem ver suas fotos?\n\n` +
+    `Não se preocupe! As lembranças da sua aventura estão guardadas com segurança em nosso reino. 🏰✨\n\n` +
     `Acesse o portal abaixo para ver sua galeria e escolher suas fotos favoritas:\n` +
     `👉 ${shopUrl}\n\n` +
-    `${cpfInstruction}\n\n` +
+    `${phoneInstruction}\n\n` +
     `⏳ _Atenção: Suas fotos possuem prazo de validade antes da exclusão automática do servidor!_`
   );
 }
