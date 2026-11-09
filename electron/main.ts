@@ -474,6 +474,7 @@ app.whenReady().then(() => {
             original_name: originalName,
             preview_url: remotePublicUrl,
             local_original_path: localOriginalUrl,
+            has_watermark: false,
             status: 'pending'
           }).select('id').single();
 
@@ -863,6 +864,7 @@ app.whenReady().then(() => {
           original_name: originalName,
           preview_url: remotePublicUrl,
           local_original_path: localOriginalUrl,
+          has_watermark: false,
           status: 'pending'
         }).select('id').single();
 

@@ -6,7 +6,7 @@
   "main": "dist-electron/main.js",
   "scripts": {
     "dev": "vite",
-    "build": "tsc && vite build && electron-builder",
+    "build": "tsc && node --max-old-space-size=6144 ./node_modules/vite/bin/vite.js build && electron-builder",
     "preview": "vite preview"
   },
   "dependencies": {

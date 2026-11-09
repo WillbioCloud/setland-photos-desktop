@@ -7,7 +7,15 @@ import { supabase } from '@/lib/supabaseClient';
 interface PresentationModalProps {
   isOpen: boolean;
   onClose: () => void;
-  photos: { id: number | string; url: string; status?: string }[];
+  photos: { 
+    id: number | string; 
+    url: string; 
+    status?: string;
+    hasWatermark?: boolean;
+    watermarkX?: number | null;
+    watermarkY?: number | null;
+    watermarkPreset?: string | null;
+  }[];
   selectedPhotos: (number | string)[];
   togglePhoto: (id: number | string) => void;
   onConfirmSelection?: () => void;
@@ -37,12 +45,17 @@ export default function PresentationModal({
 
   // Helper para recuperar ou inicializar a configuração da foto atual
   const getActiveWatermark = useCallback((photoId: string | number): PhotoWatermarkConfig => {
-    return watermarksByPhoto[photoId] || {
-      enabled: false, // Padrão inicial: desativada (cliente ativa se quiser)
-      preset: 'br',
-      customPos: { xPercent: 78, yPercent: 82 }
+    if (watermarksByPhoto[photoId]) return watermarksByPhoto[photoId];
+    const foundPhoto = photos.find(p => String(p.id) === String(photoId));
+    return {
+      enabled: Boolean(foundPhoto?.hasWatermark ?? false), // Padrão inicial: desativada (cliente ativa se quiser)
+      preset: (foundPhoto?.watermarkPreset as WatermarkPreset) || 'br',
+      customPos: {
+        xPercent: Number(foundPhoto?.watermarkX ?? 78),
+        yPercent: Number(foundPhoto?.watermarkY ?? 82)
+      }
     };
-  }, [watermarksByPhoto]);
+  }, [watermarksByPhoto, photos]);
 
   // Orientação e dimensões da foto atual
   const [isPortrait, setIsPortrait] = useState(false);

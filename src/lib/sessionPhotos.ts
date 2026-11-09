@@ -39,6 +39,10 @@ export const SESSION_PHOTO_SELECT = [
   'expires_at',
   'is_purchased',
   'is_printed',
+  'has_watermark',
+  'watermark_x',
+  'watermark_y',
+  'watermark_preset',
   'created_at',
 ].join(', ');
 
@@ -68,6 +72,10 @@ export interface SessionPhoto {
   status: string;
   isPurchased: boolean;
   isPrinted: boolean;
+  hasWatermark?: boolean;
+  watermarkX?: number | null;
+  watermarkY?: number | null;
+  watermarkPreset?: string | null;
   expiresAt: string | null;
   createdAt: string | null;
 }
@@ -168,6 +176,10 @@ export function shapeSessionPhoto(row: any): SessionPhoto {
     status,
     isPurchased: row?.isPurchased === true || row?.is_purchased === true,
     isPrinted: row?.isPrinted === true || row?.is_printed === true,
+    hasWatermark: row?.hasWatermark === true || row?.has_watermark === true,
+    watermarkX: row?.watermarkX ?? row?.watermark_x ?? null,
+    watermarkY: row?.watermarkY ?? row?.watermark_y ?? null,
+    watermarkPreset: row?.watermarkPreset ?? row?.watermark_preset ?? null,
     expiresAt: row?.expiresAt ?? row?.expires_at ?? null,
     createdAt: row?.createdAt ?? row?.created_at ?? null,
   };
