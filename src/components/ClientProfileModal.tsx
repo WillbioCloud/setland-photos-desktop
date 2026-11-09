@@ -112,14 +112,19 @@ export default function ClientProfileModal({ isOpen, onClose, client }: ClientPr
   React.useEffect(() => {
     if (!isOpen || !sessionId) return;
 
+    setSelectedPhotos([]);
+
     const handleRefresh = () => { void syncSessionPhotos(); };
+    const handleAddToCart = () => { setSelectedPhotos([]); };
 
     window.addEventListener('session-updated', handleRefresh);
     window.addEventListener('drive-photo-synced', handleRefresh);
+    window.addEventListener('add-to-cart', handleAddToCart);
 
     return () => {
       window.removeEventListener('session-updated', handleRefresh);
       window.removeEventListener('drive-photo-synced', handleRefresh);
+      window.removeEventListener('add-to-cart', handleAddToCart);
     };
   }, [isOpen, sessionId, syncSessionPhotos]);
 
@@ -317,12 +322,23 @@ export default function ClientProfileModal({ isOpen, onClose, client }: ClientPr
                 </button>
               </div>
 
-              {/* Botão de Modo Apresentação */}
-              {activePhotoTab === 'apresentacao' && (
-                <Button variant="outline" onClick={() => setIsPresenting(true)} className="rounded-xl shadow-sm text-xs h-9">
-                  Modo Apresentação
-                </Button>
-              )}
+              {/* Botões de Ação: Confirmar Seleção e Modo Apresentação */}
+              <div className="flex items-center gap-2">
+                {selectedPhotos.length > 0 && (
+                  <Button 
+                    onClick={() => setIsFormatModalOpen(true)}
+                    className="rounded-xl shadow-sm text-xs h-9 bg-emerald-600 hover:bg-emerald-500 text-white font-bold animate-in fade-in zoom-in-95 duration-150"
+                  >
+                    <CheckCircle2 className="w-3.5 h-3.5 mr-1.5" />
+                    Confirmar Seleção ({selectedPhotos.length})
+                  </Button>
+                )}
+                {activePhotoTab === 'apresentacao' && (
+                  <Button variant="outline" onClick={() => setIsPresenting(true)} className="rounded-xl shadow-sm text-xs h-9">
+                    Modo Apresentação
+                  </Button>
+                )}
+              </div>
             </div>
 
             {/* Estado vazio: sessão sem fotos importadas */}
@@ -455,6 +471,31 @@ export default function ClientProfileModal({ isOpen, onClose, client }: ClientPr
             )}
           </div>
         </div>
+
+        {/* Barra Flutuante Inferior de Confirmação quando houver fotos selecionadas */}
+        {selectedPhotos.length > 0 && (
+          <div className="pt-4 border-t border-brand-border flex items-center justify-between shrink-0 bg-brand-surface animate-in slide-in-from-bottom-2 duration-200">
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-semibold text-brand-ink">
+                {selectedPhotos.length} foto(s) selecionada(s)
+              </span>
+              <button 
+                type="button" 
+                onClick={() => setSelectedPhotos([])} 
+                className="text-xs text-brand-muted hover:text-brand-ink underline ml-2 cursor-pointer"
+              >
+                Limpar seleção
+              </button>
+            </div>
+            <Button 
+              onClick={() => setIsFormatModalOpen(true)}
+              className="rounded-xl shadow-md text-xs h-9 px-5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold active:scale-95 transition-all"
+            >
+              <CheckCircle2 className="w-4 h-4 mr-1.5" />
+              Confirmar Seleção ({selectedPhotos.length})
+            </Button>
+          </div>
+        )}
       </div>
       <PresentationModal 
         isOpen={isPresenting}

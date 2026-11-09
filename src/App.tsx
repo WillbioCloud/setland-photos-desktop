@@ -235,7 +235,7 @@ function App() {
         onClose={() => setIsAdminModalOpen(false)}
         onLoginSuccess={(role) => setUserRole(role)}
       />
-      <Toaster />
+      <Toaster position="bottom-left" duration={3000} />
     </div>
   );
 }

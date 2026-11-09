@@ -198,7 +198,7 @@ export default function PDV() {
     }
 
     await supabase.from('photo_sessions').update({ status: 'Convertido/Pago' }).eq('id', order.session_id);
-    toast.success("Pagamento confirmado! O upload para o Drive iniciará em background.", { id: toastId });
+    toast.success("Pagamento confirmado! O upload para o Drive iniciará em background.", { id: toastId, duration: 3000 });
 
     // Preserva os dados do pedido em escopo imutável antes de limpar a interface
     const currentSessionId = order.session_id;
@@ -307,7 +307,7 @@ export default function PDV() {
         // Feedback de sucesso no Toast com ícone verde
         toast.success(`Entrega Digital Concluída!`, {
           description: `${photosToUpload.length} fotos salvas em alta qualidade no Google Drive.`,
-          duration: 6000
+          duration: 3500
         });
 
         // Notifica todas as telas que a sessão foi atualizada no banco
@@ -344,7 +344,7 @@ export default function PDV() {
         console.error("Erro Crítico no Drive:", err);
         toast.error(`Falha no upload para o Drive: ${err.message || 'Erro inesperado'}`, {
           id: toastUploadId,
-          duration: 8000
+          duration: 5000
         });
 
         await supabase.from('photo_sessions').update({ drive_status: 'error' }).eq('id', currentSessionId);
