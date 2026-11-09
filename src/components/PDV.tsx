@@ -730,7 +730,7 @@ export default function PDV() {
                     className="w-full flex items-center justify-center gap-2 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 disabled:opacity-50 text-slate-950 font-bold px-4 py-3 rounded-xl transition-lux active:scale-[0.98] text-xs xl:text-sm shadow-lg shadow-amber-500/20"
                   >
                     <Store className="h-4 w-4 text-slate-950" />
-                    Efetuar Pagamento (Enviar p/ Lojinha)
+                    Efetuar Pagamento
                   </button>
                 )}
               </div>
