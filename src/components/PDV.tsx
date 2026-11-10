@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Camera, QrCode, CreditCard, Banknote, ShoppingCart, Trash2, ArrowRight, Check, Store } from 'lucide-react';
+import { Camera, QrCode, CreditCard, Banknote, ShoppingCart, Trash2, ArrowRight, Check, Store, Clock } from 'lucide-react';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import PrintOrderModal from './PrintOrderModal';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -599,17 +599,10 @@ export default function PDV() {
                   </span>
 
                   {isAwaitingStore ? (
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        executeCompleteOrder(order, 'lojinha');
-                      }}
-                      className="px-3.5 py-2 rounded-xl font-bold transition-lux text-xs shadow-md flex items-center gap-1.5 active:scale-95 bg-emerald-600 hover:bg-emerald-700 text-white"
-                    >
-                      <Check className="w-4 h-4" />
-                      Confirmar Pago
-                    </button>
+                    <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-500/15 border border-amber-500/30 text-amber-500 dark:text-amber-400 text-xs font-semibold">
+                      <Clock className="w-3.5 h-3.5 animate-pulse" />
+                      <span>Aguardando Lojinha</span>
+                    </div>
                   ) : (
                     <button
                       disabled={isSelected}
@@ -735,14 +728,15 @@ export default function PDV() {
             {selectedTerminal === "Via Lojinha (Balcão)" ? (
               <div>
                 {activeOrder?.status === 'awaiting_store' ? (
-                  <button
-                    onClick={() => executeCompleteOrder(activeOrder, 'lojinha')}
-                    disabled={!activeOrder}
-                    className="w-full flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white px-4 py-3 rounded-xl font-bold transition-lux active:scale-[0.98] text-xs xl:text-sm shadow-md"
-                  >
-                    <Check className="h-4 w-4" />
-                    Confirmar Pagamento Recebido (Lojinha)
-                  </button>
+                  <div className="p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-center space-y-1">
+                    <p className="text-xs font-bold text-amber-500 flex items-center justify-center gap-1.5">
+                      <Clock className="w-4 h-4 animate-pulse" />
+                      Aguardando Pagamento na Lojinha
+                    </p>
+                    <p className="text-[11px] text-muted-foreground">
+                      O pagamento deste pedido deve ser concluído no caixa da Lojinha com a forma selecionada.
+                    </p>
+                  </div>
                 ) : (
                   <button
                     onClick={handleSendToLojinha}

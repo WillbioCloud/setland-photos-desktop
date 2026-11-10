@@ -71,6 +71,17 @@ export default function LojinhaView() {
   const [activeTab, setActiveTab] = useState<'awaiting' | 'paid'>('awaiting');
   const [isLoading, setIsLoading] = useState(true);
   const [processingOrderId, setProcessingOrderId] = useState<string | null>(null);
+  const [selectedPaymentMethods, setSelectedPaymentMethods] = useState<Record<string, 'pix' | 'cartao' | 'dinheiro'>>({});
+  const [connectionStatus, setConnectionStatus] = useState<'connected' | 'connecting' | 'disconnected'>(
+    typeof navigator !== 'undefined' && !navigator.onLine ? 'disconnected' : 'connecting'
+  );
+
+  const handleSelectMethod = (orderId: string, method: 'pix' | 'cartao' | 'dinheiro') => {
+    setSelectedPaymentMethods((prev) => ({
+      ...prev,
+      [orderId]: method
+    }));
+  };
 
   // Controle de alertas e pop-ups nativos do Windows para novos pedidos
   const knownAwaitingIdsRef = useRef<Set<string>>(new Set());
@@ -112,23 +123,6 @@ export default function LojinhaView() {
     });
   }, []);
 
-  // Botão de teste imediato da notificação nativa + som
-  const handleTestAlert = () => {
-    playAlertSound();
-    const api = typeof window !== 'undefined' ? (window.electronAPI || window.electron) : null;
-    if (api?.showNotification) {
-      void api.showNotification({
-        title: '🏰 Novo Pedido de Fotos!',
-        body: 'Cliente Teste • 1 Impressa(s) e 1 Digital(is) — Total: R$ 35,00',
-        silent: false,
-      });
-    }
-    toast.info('🏰 Novo Pedido de Fotos!', {
-      description: 'Cliente Teste • 1 Impressa(s) e 1 Digital(is) — Total: R$ 35,00',
-      duration: 5000,
-    });
-  };
-
   // Carrega pacotes ativos para o motor de precificação
   useEffect(() => {
     async function loadPackages() {
@@ -164,6 +158,8 @@ export default function LojinhaView() {
         .order('created_at', { ascending: false });
 
       if (error) throw error;
+      setConnectionStatus((prev) => (prev === 'disconnected' ? 'connected' : prev));
+
       if (data) {
         setOrders(data);
 
@@ -185,6 +181,9 @@ export default function LojinhaView() {
       }
     } catch (err: any) {
       console.warn('[LojinhaView] Erro ao buscar pedidos:', err);
+      if (typeof navigator !== 'undefined' && !navigator.onLine) {
+        setConnectionStatus('disconnected');
+      }
     } finally {
       setIsLoading(false);
     }
@@ -196,9 +195,21 @@ export default function LojinhaView() {
     loadOrdersRef.current = loadOrders;
   });
 
-  // Assinatura Realtime no Supabase + Polling a cada 5s
+  // Assinatura Realtime no Supabase + Polling a cada 5s + Monitor de Rede
   useEffect(() => {
     loadOrdersRef.current();
+
+    const handleOnline = () => {
+      setConnectionStatus('connecting');
+      loadOrdersRef.current();
+    };
+
+    const handleOffline = () => {
+      setConnectionStatus('disconnected');
+    };
+
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
 
     const channel = supabase.channel('lojinha-orders-realtime')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, async (payload: any) => {
@@ -231,39 +242,49 @@ export default function LojinhaView() {
         }
         loadOrdersRef.current();
       })
-      .subscribe();
+      .subscribe((status) => {
+        if (status === 'SUBSCRIBED') {
+          setConnectionStatus('connected');
+        } else if (status === 'CLOSED' || status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+          if (typeof navigator !== 'undefined' && !navigator.onLine) {
+            setConnectionStatus('disconnected');
+          } else {
+            setConnectionStatus('connecting');
+          }
+        }
+      });
 
     const interval = setInterval(() => {
       loadOrdersRef.current();
     }, 5000);
 
     return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
       supabase.removeChannel(channel);
       clearInterval(interval);
     };
   }, [notifyNewStoreOrder]);
 
   // Ação de confirmação de pagamento
-  const handleConfirmPayment = async (order: any, method: string = 'lojinha') => {
+  const handleConfirmPayment = async (order: any, method: 'pix' | 'cartao' | 'dinheiro') => {
     if (processingOrderId) return;
     setProcessingOrderId(order.id);
 
-    const clientName = order.photo_sessions?.clients?.name || order.photo_sessions?.client_name || 'Cliente';
-    const toastId = toast.loading(`Confirmando pagamento de ${clientName}...`);
-
+    const toastId = toast.loading("Registrando pagamento no caixa...");
     try {
-      // 1. Atualiza pedido para pago
-      const { error: orderErr } = await supabase
+      const mappedMethod = method === 'cartao' ? 'credit_card' : method;
+
+      const { error } = await supabase
         .from('orders')
         .update({
           status: 'paid',
-          payment_method: method
+          payment_method: mappedMethod
         })
         .eq('id', order.id);
 
-      if (orderErr) throw orderErr;
+      if (error) throw error;
 
-      // 2. Atualiza sessão para Convertido/Pago
       if (order.session_id) {
         await supabase
           .from('photo_sessions')
@@ -271,16 +292,11 @@ export default function LojinhaView() {
           .eq('id', order.session_id);
       }
 
-      toast.success(`Pagamento de ${clientName} confirmado! A equipe de fotografia já foi notificada.`, {
-        id: toastId,
-        duration: 4000
-      });
-
-      // Recarrega localmente
+      toast.success(`Pagamento via ${method === 'cartao' ? 'Cartão' : method.toUpperCase()} confirmado!`, { id: toastId });
       loadOrders();
     } catch (err: any) {
-      console.error('[Lojinha] Erro ao confirmar pagamento:', err);
-      toast.error(`Falha ao registrar pagamento: ${err?.message || 'Erro no banco de dados'}`, { id: toastId });
+      console.error("Erro ao confirmar pagamento na lojinha:", err);
+      toast.error("Erro ao confirmar pagamento no banco de dados.", { id: toastId });
     } finally {
       setProcessingOrderId(null);
     }
@@ -323,20 +339,36 @@ export default function LojinhaView() {
               <Store className="w-5 h-5" />
             </div>
             <div>
-              <div className="flex items-center gap-3 flex-wrap">
-                <h1 className="text-xl font-bold text-foreground tracking-tight">Caixa da Lojinha · Recebimento de Fotos</h1>
-                <button
-                  type="button"
-                  onClick={handleTestAlert}
-                  className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-semibold bg-amber-500/15 hover:bg-amber-500/25 text-amber-600 dark:text-amber-400 border border-amber-500/30 transition-all cursor-pointer shadow-xs active:scale-95"
-                  title="Disparar notificação nativa do Windows e alerta sonoro"
-                >
-                  🔔 Testar Alerta
-                </button>
-              </div>
+              <h1 className="text-xl font-bold text-foreground tracking-tight">Caixa da Lojinha · Recebimento de Fotos</h1>
               <div className="flex items-center gap-2 mt-0.5">
-                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                <span className="text-xs text-muted-foreground font-medium">Sincronizado em Tempo Real com a Fotografia</span>
+                {connectionStatus === 'connected' && (
+                  <>
+                    <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                    <span className="text-xs text-muted-foreground font-medium">Sincronizado em Tempo Real com a Fotografia</span>
+                  </>
+                )}
+                {connectionStatus === 'connecting' && (
+                  <>
+                    <span className="w-2 h-2 rounded-full bg-amber-500 animate-ping" />
+                    <span className="text-xs text-amber-500 font-medium">Conectando à Fotografia...</span>
+                  </>
+                )}
+                {connectionStatus === 'disconnected' && (
+                  <>
+                    <span className="w-2 h-2 rounded-full bg-rose-500 animate-pulse" />
+                    <span className="text-xs text-rose-500 font-bold">Desconectado · Tentando reconectar...</span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setConnectionStatus('connecting');
+                        loadOrders();
+                      }}
+                      className="text-[11px] font-semibold text-rose-400 hover:text-rose-300 underline cursor-pointer ml-1"
+                    >
+                      Reconectar
+                    </button>
+                  </>
+                )}
               </div>
             </div>
           </div>
@@ -525,46 +557,84 @@ export default function LojinhaView() {
                       </div>
                     </div>
 
-                    {/* Botões de Ação de Pagamento */}
-                    <div className="mt-5 space-y-2">
+                    {/* Seletor de Forma de Pagamento */}
+                    <div className="mt-3 pt-3 border-t border-border/60 dark:border-white/10 space-y-2">
+                      <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider flex items-center justify-between">
+                        <span>Forma de Pagamento:</span>
+                        {selectedPaymentMethods[order.id] && (
+                          <span className="text-primary font-bold lowercase text-[10px] bg-primary/10 px-2 py-0.5 rounded-full border border-primary/20">
+                            {selectedPaymentMethods[order.id]} selecionado
+                          </span>
+                        )}
+                      </p>
+
                       <div className="grid grid-cols-3 gap-2">
                         <button
                           type="button"
-                          onClick={() => handleConfirmPayment(order, 'pix')}
-                          disabled={isProcessing}
-                          className="py-2.5 px-3 rounded-xl border border-border bg-card hover:bg-muted font-bold text-xs flex items-center justify-center gap-1.5 transition-all active:scale-95 disabled:opacity-50 cursor-pointer"
+                          onClick={() => handleSelectMethod(order.id, 'pix')}
+                          className={`py-2 px-2.5 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition-all border cursor-pointer active:scale-95 ${
+                            selectedPaymentMethods[order.id] === 'pix'
+                              ? 'bg-primary text-primary-foreground border-primary shadow-sm gold-glow'
+                              : 'bg-secondary/40 text-muted-foreground border-border hover:text-foreground hover:bg-secondary'
+                          }`}
                         >
-                          <QrCode className="w-3.5 h-3.5 text-primary" />
-                          PIX
+                          <QrCode className="w-3.5 h-3.5"/>
+                          <span>Pix</span>
                         </button>
+
                         <button
                           type="button"
-                          onClick={() => handleConfirmPayment(order, 'credit_card')}
-                          disabled={isProcessing}
-                          className="py-2.5 px-3 rounded-xl border border-border bg-card hover:bg-muted font-bold text-xs flex items-center justify-center gap-1.5 transition-all active:scale-95 disabled:opacity-50 cursor-pointer"
+                          onClick={() => handleSelectMethod(order.id, 'cartao')}
+                          className={`py-2 px-2.5 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition-all border cursor-pointer active:scale-95 ${
+                            selectedPaymentMethods[order.id] === 'cartao'
+                              ? 'bg-primary text-primary-foreground border-primary shadow-sm gold-glow'
+                              : 'bg-secondary/40 text-muted-foreground border-border hover:text-foreground hover:bg-secondary'
+                          }`}
                         >
-                          <CreditCard className="w-3.5 h-3.5 text-blue-500" />
-                          Cartão
+                          <CreditCard className="w-3.5 h-3.5"/>
+                          <span>Cartão</span>
                         </button>
+
                         <button
                           type="button"
-                          onClick={() => handleConfirmPayment(order, 'cash')}
-                          disabled={isProcessing}
-                          className="py-2.5 px-3 rounded-xl border border-border bg-card hover:bg-muted font-bold text-xs flex items-center justify-center gap-1.5 transition-all active:scale-95 disabled:opacity-50 cursor-pointer"
+                          onClick={() => handleSelectMethod(order.id, 'dinheiro')}
+                          className={`py-2 px-2.5 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition-all border cursor-pointer active:scale-95 ${
+                            selectedPaymentMethods[order.id] === 'dinheiro'
+                              ? 'bg-primary text-primary-foreground border-primary shadow-sm gold-glow'
+                              : 'bg-secondary/40 text-muted-foreground border-border hover:text-foreground hover:bg-secondary'
+                          }`}
                         >
-                          <Banknote className="w-3.5 h-3.5 text-emerald-500" />
-                          Dinheiro
+                          <Banknote className="w-3.5 h-3.5"/>
+                          <span>Dinheiro</span>
                         </button>
                       </div>
 
+                      {/* Botão Principal de Confirmação */}
                       <button
                         type="button"
-                        onClick={() => handleConfirmPayment(order, 'lojinha')}
-                        disabled={isProcessing}
-                        className="w-full py-3 px-4 rounded-xl font-black text-sm bg-emerald-600 hover:bg-emerald-500 text-white shadow-md flex items-center justify-center gap-2 transition-all active:scale-[0.98] disabled:opacity-50 cursor-pointer"
+                        onClick={() => {
+                          const chosen = selectedPaymentMethods[order.id];
+                          if (!chosen) {
+                            toast.warning("Selecione se o cliente pagou em Pix, Cartão ou Dinheiro antes de confirmar.");
+                            return;
+                          }
+                          handleConfirmPayment(order, chosen);
+                        }}
+                        disabled={!selectedPaymentMethods[order.id] || isProcessing}
+                        className={`w-full mt-2 py-2.5 px-4 rounded-xl text-xs font-bold flex items-center justify-center gap-2 transition-all shadow-md active:scale-[0.98] ${
+                          selectedPaymentMethods[order.id] && !isProcessing
+                            ? 'bg-emerald-600 hover:bg-emerald-500 text-white cursor-pointer'
+                            : 'bg-muted text-muted-foreground/50 border border-border cursor-not-allowed'
+                        }`}
                       >
-                        <Check className="w-4 h-4 stroke-[3]" />
-                        {isProcessing ? 'Confirmando...' : 'Confirmar Pagamento Recebido'}
+                        <Check className="w-4 h-4"/>
+                        <span>
+                          {isProcessing
+                            ? 'Confirmando...'
+                            : selectedPaymentMethods[order.id]
+                              ? `Confirmar Pagamento (${selectedPaymentMethods[order.id] === 'cartao' ? 'Cartão' : selectedPaymentMethods[order.id] === 'pix' ? 'Pix' : 'Dinheiro'})`
+                              : 'Selecione a forma de pagamento acima'}
+                        </span>
                       </button>
                     </div>
                   </Card>
